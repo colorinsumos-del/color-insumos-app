@@ -9,15 +9,16 @@ import json
 import shutil
 import time
 from datetime import datetime
-from PIL import Image  # Necesario para redimensionar imágenes
+from PIL import Image  # Librería para redimensionar imágenes
 
 # --- CONFIGURACIÓN ---
 DB_NAME = "catalogo_color_v2.db"
 IMG_DIR = "static/fotos"
 os.makedirs(IMG_DIR, exist_ok=True)
 
-st.set_page_config(page_title="Color Insumos - Optimizado", layout="wide")
+st.set_page_config(page_title="Color Insumos - Sistema Maestro", layout="wide")
 
+# --- MOTOR DE VELOCIDAD (CACHÉ) ---
 @st.cache_resource
 def get_connection():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
@@ -27,38 +28,31 @@ def obtener_catalogo_cache():
     conn = get_connection()
     return pd.read_sql("SELECT * FROM productos", conn)
 
+# --- INICIALIZACIÓN Y MIGRACIÓN ---
 def init_db():
     conn = get_connection()
     conn.execute('''CREATE TABLE IF NOT EXISTS productos 
                  (sku TEXT, descripcion TEXT, precio REAL, categoria TEXT, foto_path TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS usuarios 
-                 (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT, direccion TEXT, telefono TEXT)''')
+                 (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS pedidos 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)''')
     
     cursor = conn.execute("PRAGMA table_info(usuarios)")
     columnas = [info[1] for info in cursor.fetchall()]
-    if "direccion" not in columnas: conn.execute("ALTER TABLE usuarios ADD COLUMN direccion TEXT DEFAULT ''")
-    if "telefono" not in columnas: conn.execute("ALTER TABLE usuarios ADD COLUMN telefono TEXT DEFAULT ''")
+    if "direccion" not in columnas:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN direccion TEXT DEFAULT ''")
+    if "telefono" not in columnas:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN telefono TEXT DEFAULT ''")
     
     try:
         conn.execute("INSERT OR IGNORE INTO usuarios VALUES (?,?,?,?,?,?)", 
-                     ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin', 'Sede Central', '0000-0000'))
+                     ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin', 'Oficina Central', '0000-00-00'))
         conn.commit()
     except: pass
 
-# --- ESTILOS ---
-st.markdown("""
-    <style>
-        html { overflow-y: scroll !important; }
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-thumb { background: #888; border-radius: 5px; }
-        .stButton button { border-radius: 8px; }
-    </style>
-""", unsafe_allow_html=True)
-
-# --- PROCESAMIENTO DE PDF CON REDIMENSIONAMIENTO ---
-def procesar_pdf_optimizado(pdf_file):
+# --- FUNCIONES DE PROCESAMIENTO (IMÁGENES PEQUEÑAS) ---
+def procesar_pdf(pdf_file):
     progress_bar = st.progress(0)
     with open("temp.pdf", "wb") as f: f.write(pdf_file.getbuffer())
     doc = fitz.open("temp.pdf")
@@ -87,20 +81,21 @@ def procesar_pdf_optimizado(pdf_file):
                             pix = fitz.Pixmap(doc, img['xref'])
                             if pix.n - pix.alpha > 3: pix = fitz.Pixmap(fitz.csRGB, pix)
                             
-                            # --- AQUÍ OPTIMIZAMOS LA IMAGEN ---
-                            img_data = Image.open(io.BytesIO(pix.tobytes()))
-                            img_data.thumbnail((300, 300)) # Redimensionar a max 300px
-                            f_path = os.path.join(IMG_DIR, f"{sku}.webp") # Usar formato WebP (más ligero)
-                            img_data.save(f_path, "WEBP", quality=70) # Guardar optimizada
+                            # --- REDIMENSIONAMIENTO A MINIATURA ---
+                            img_pil = Image.open(io.BytesIO(pix.tobytes()))
+                            img_pil.thumbnail((300, 300)) # Tamaño máximo 300px
+                            f_path = os.path.join(IMG_DIR, f"{sku}.webp")
+                            img_pil.save(f_path, "WEBP", quality=75) # WebP es más ligero
                             break
                     
-                    productos.append({"sku": sku, "descripcion": desc, "precio": precio, "categoria": "VARIOS", "foto_path": f_path})
+                    productos.append({"sku": sku, "descripcion": desc, "precio": precio, 
+                                    "categoria": "VARIOS", "foto_path": f_path})
                 except: continue
             progress_bar.progress((i + 1) / total_p)
             
     pd.DataFrame(productos).to_sql('productos', get_connection(), if_exists='replace', index=False)
     st.cache_data.clear()
-    st.success("¡Catálogo y fotos optimizadas!")
+    st.success("Catálogo y miniaturas actualizadas.")
 
 @st.fragment
 def card_producto(row, idx):
@@ -112,15 +107,18 @@ def card_producto(row, idx):
         cant = st.number_input("Cant", 1, 100, 1, key=f"q_{row['sku']}_{idx}")
         if st.button("➕ Añadir", key=f"b_{row['sku']}_{idx}", use_container_width=True):
             st.session_state.carrito[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
-            st.toast("Añadido")
+            st.toast("✅ Añadido")
 
-# --- LÓGICA DE SESIÓN ---
+# --- ESTILOS CSS ---
+st.markdown("<style>html { overflow-y: scroll !important; } .stButton button { border-radius: 8px; }</style>", unsafe_allow_html=True)
+
+# --- INICIO DE APLICACIÓN ---
 init_db()
 if 'auth' not in st.session_state: st.session_state.auth = False
 if 'carrito' not in st.session_state: st.session_state.carrito = {}
 
 if not st.session_state.auth:
-    st.title("Acceso Color Insumos")
+    st.title("🚀 Acceso Color Insumos")
     u, p = st.text_input("Usuario"), st.text_input("Clave", type="password")
     if st.button("Entrar", type="primary"):
         res = get_connection().execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u, p)).fetchone()
@@ -131,11 +129,12 @@ if not st.session_state.auth:
 else:
     user = st.session_state.user_data
     with st.sidebar:
-        st.header(user['nombre'])
+        st.header(f"👤 {user['nombre']}")
         if st.button("🔄 Sincronizar"): st.cache_data.clear(); st.rerun()
-        if st.button("Salir"): st.session_state.auth = False; st.rerun()
+        if st.button("Cerrar Sesión"): st.session_state.auth = False; st.rerun()
+        st.divider()
         nav = ["🛒 Tienda", "📊 Pedidos", "📁 Cargar PDF", "👥 Clientes"] if user['rol'] == 'admin' else ["🛒 Comprar", "📜 Mis Pedidos"]
-        menu = st.radio("Menú", nav)
+        menu = st.radio("Navegación", nav)
 
     # --- TIENDA ---
     if "🛒" in menu:
@@ -143,46 +142,46 @@ else:
         busq = st.text_input("🔍 Buscar SKU o Nombre...")
         if busq:
             df_v = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
-            cols = st.columns(5) # Más columnas porque las fotos son pequeñas
+            cols = st.columns(5) # 5 columnas ahora que las fotos son pequeñas
             for idx, row in df_v.reset_index().iterrows():
                 with cols[idx % 5]: card_producto(row, idx)
-        else: st.info("Escribe algo para buscar.")
+        else: st.info("Escribe algo para buscar productos.")
 
-    # --- GESTIÓN DE CLIENTES CORREGIDA ---
+    # --- GESTIÓN DE CLIENTES (CORRECCIÓN DE VISIBILIDAD) ---
     elif menu == "👥 Clientes":
-        st.title("Gestión de Clientes")
+        st.title("👥 Gestión de Clientes")
         t1, t2 = st.tabs(["Lista", "Nuevo"])
         with t1:
-            # Quitamos el filtro de rol='cliente' para asegurar que veas a todos los que no son admin
+            # Filtro corregido: muestra a todos los que NO son admin
             df_u = pd.read_sql("SELECT * FROM usuarios WHERE rol != 'admin'", get_connection())
-            for _, row in df_u.iterrows():
+            for idx, row in df_u.iterrows():
                 with st.container(border=True):
-                    c1, c2, c3 = st.columns([3, 2, 1])
+                    c1, c2, c3 = st.columns([2, 2, 1])
                     c1.write(f"**{row['nombre']}** ({row['username']})")
                     c2.write(f"📞 {row['telefono']} | 📍 {row['direccion']}")
                     if c3.button("🗑️", key=f"del_{row['username']}"):
                         get_connection().execute("DELETE FROM usuarios WHERE username=?", (row['username'],))
                         get_connection().commit(); st.rerun()
         with t2:
-            with st.form("nu"):
+            with st.form("new_u"):
                 nu, np, nn = st.text_input("ID/Email"), st.text_input("Clave"), st.text_input("Nombre")
                 nt, nd = st.text_input("Teléfono"), st.text_area("Dirección")
-                if st.form_submit_button("Guardar"):
+                if st.form_submit_button("Registrar"):
                     get_connection().execute("INSERT INTO usuarios VALUES (?,?,?,?,?,?)", (nu, np, nn, 'cliente', nd, nt))
                     get_connection().commit(); st.success("Registrado"); st.rerun()
 
-    # --- PEDIDOS ---
+    # --- PEDIDOS TOTALES ---
     elif menu == "📊 Pedidos":
         peds = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", get_connection())
         for _, p in peds.iterrows():
             with st.expander(f"Pedido #{p['id']} - {p['username']}"):
                 st.table(pd.DataFrame(json.loads(p['items'])))
-                if st.button(f"🗑️ Eliminar #{p['id']}", key=f"dp_{p['id']}"):
+                if st.button(f"🗑️ Eliminar Pedido #{p['id']}", key=f"dp_{p['id']}"):
                     get_connection().execute("DELETE FROM pedidos WHERE id=?", (p['id'],))
                     get_connection().commit(); st.rerun()
 
-    # --- PDF ---
+    # --- CARGA PDF ---
     elif menu == "📁 Cargar PDF":
         f = st.file_uploader("Subir PDF", type="pdf")
-        if f and st.button("Procesar"): 
-            with st.spinner("Optimizando imágenes..."): procesar_pdf_optimizado(f)
+        if f and st.button("Procesar"):
+            with st.spinner("Optimizando imágenes..."): procesar_pdf(f)
