@@ -7,6 +7,7 @@ import os
 import io
 import json
 import shutil
+import time
 from datetime import datetime
 
 # --- CONFIGURACIÓN E INICIALIZACIÓN ---
@@ -16,22 +17,12 @@ os.makedirs(IMG_DIR, exist_ok=True)
 
 st.set_page_config(page_title="Color Insumos - Sistema de Pedidos", layout="wide")
 
-# --- ESTILO CSS (Scrollbar para Sidebar y Diseño) ---
+# --- ESTILO CSS (Scrollbar y Diseño) ---
 st.markdown("""
     <style>
-        /* Barra de scroll para el menú lateral */
-        [data-testid="stSidebarNav"] {
-            max-height: 100vh;
-            overflow-y: auto;
-        }
-        section[data-testid="stSidebar"] > div {
-            height: 100vh;
-            overflow-y: auto;
-        }
-        /* Ajuste de tarjetas de producto */
-        .stButton button {
-            border-radius: 5px;
-        }
+        [data-testid="stSidebarNav"] { max-height: 100vh; overflow-y: auto; }
+        section[data-testid="stSidebar"] > div { height: 100vh; overflow-y: auto; }
+        .stButton button { border-radius: 8px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -61,24 +52,31 @@ init_db()
 # --- FUNCIONES DE APOYO ---
 def obtener_categoria(sku, descripcion):
     d = descripcion.upper()
-    if any(x in d for x in ["ABACO", "DIDACTICO", "JUEGO", "ROMPECABEZA", "PZZ", "MEMORIA", "LOTERIA"]): return "🧩 JUEGOS Y DIDÁCTICOS"
-    if any(x in d for x in ["MARCADOR", "LAPIZ", "BOLIGRAFO", "COLORES", "BORRADOR", "SACAPUNTA", "TIZA", "RESALTADOR"]): return "✏️ ESCRITURA"
-    if any(x in d for x in ["PAPEL", "CARTULINA", "BLOCK", "LIBRETA", "CUADERNO", "RESMA", "SOBRE", "FORRO"]): return "📄 PAPELERÍA"
-    if any(x in d for x in ["TIJERA", "REGLA", "PEGA", "GRAPADORA", "CINTA", "CORRECTOR", "CARPETA", "PERFORADORA"]): return "✂️ OFICINA / ESCOLAR"
-    if any(x in d for x in ["TEMPERA", "PINCEL", "PLASTILINA", "FOAMI", "SILICON", "ESTUCHE", "ACUARELA"]): return "🎨 ARTE Y MANUALIDADES"
+    if any(x in d for x in ["ABACO", "DIDACTICO", "JUEGO", "ROMPECABEZA", "PZZ", "MEMORIA"]): return "🧩 JUEGOS Y DIDÁCTICOS"
+    if any(x in d for x in ["MARCADOR", "LAPIZ", "BOLIGRAFO", "COLORES", "BORRADOR"]): return "✏️ ESCRITURA"
+    if any(x in d for x in ["PAPEL", "CARTULINA", "BLOCK", "LIBRETA", "CUADERNO"]): return "📄 PAPELERÍA"
+    if any(x in d for x in ["TIJERA", "REGLA", "PEGA", "GRAPADORA", "CINTA"]): return "✂️ OFICINA / ESCOLAR"
     return "📦 VARIOS"
 
 def procesar_pdf(pdf_file):
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
     with open("temp.pdf", "wb") as f: f.write(pdf_file.getbuffer())
     doc = fitz.open("temp.pdf")
     productos = []
+    
     if os.path.exists(IMG_DIR): shutil.rmtree(IMG_DIR)
     os.makedirs(IMG_DIR)
+
     with pdfplumber.open("temp.pdf") as pdf:
+        total_pages = len(pdf.pages)
         for i, page in enumerate(pdf.pages):
+            status_text.text(f"Procesando página {i+1} de {total_pages}...")
             tables = page.find_tables()
             if not tables: continue
             imgs_pag = [{'bbox': img['bbox'], 'xref': x[0]} for img, x in zip(doc[i].get_image_info(), doc[i].get_images(full=True))]
+            
             for row in tables[0].rows:
                 try:
                     sku_t = page.within_bbox(row.cells[0]).extract_text()
@@ -95,16 +93,21 @@ def procesar_pdf(pdf_file):
                             f_path = os.path.join(IMG_DIR, f"{sku}.png"); pix.save(f_path); break
                     productos.append({"sku": sku, "descripcion": desc, "precio": precio, "categoria": obtener_categoria(sku, desc), "foto_path": f_path})
                 except: continue
+            progress_bar.progress((i + 1) / total_pages)
+            
     df = pd.DataFrame(productos)
     conn = sqlite3.connect(DB_NAME)
     conn.execute("DELETE FROM productos"); df.to_sql('productos', conn, if_exists='append', index=False); conn.close()
+    status_text.text("¡Catálogo actualizado con éxito!")
+    time.sleep(1)
+    progress_bar.empty()
 
 # --- INTERFAZ ---
 if not st.session_state.auth:
     st.title("🚀 Color Insumos - Acceso")
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
-    if st.button("Iniciar Sesión", type="primary"):
+    if st.button("Entrar", type="primary"):
         conn = sqlite3.connect(DB_NAME)
         res = conn.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u, p)).fetchone()
         conn.close()
@@ -112,7 +115,7 @@ if not st.session_state.auth:
             st.session_state.auth = True
             st.session_state.user_data = {"user": res[0], "nombre": res[2], "rol": res[3]}
             st.rerun()
-        else: st.error("Acceso denegado")
+        else: st.error("Error de acceso")
 else:
     user = st.session_state.user_data
     with st.sidebar:
@@ -120,99 +123,74 @@ else:
         if st.button("Cerrar Sesión"):
             st.session_state.auth = False; st.rerun()
         st.divider()
-        nav = ["🛒 Tienda", "📁 Cargar PDF", "👥 Clientes", "📊 Pedidos"] if user['rol'] == 'admin' else ["🛒 Comprar", "📜 Mis Pedidos"]
+        nav = ["🛒 Tienda", "📁 Cargar PDF", "👥 Clientes", "📊 Pedidos Totales"] if user['rol'] == 'admin' else ["🛒 Comprar", "📜 Mis Pedidos"]
         menu = st.radio("Navegación", nav)
 
+    # --- COMPRAS Y CARRITO ---
     if menu in ["🛒 Tienda", "🛒 Comprar"]:
-        t1, t2 = st.tabs(["🛍️ Catálogo", "🛒 Mi Carrito"])
-
+        t1, t2 = st.tabs(["🛍️ Catálogo", "🛒 Carrito"])
         with t1:
-            c1, c2 = st.columns([2, 1])
-            busq = c1.text_input("🔍 Buscar...")
             conn = sqlite3.connect(DB_NAME)
             df_cat = pd.read_sql("SELECT * FROM productos", conn)
             conn.close()
-
             if not df_cat.empty:
-                cat_s = c2.selectbox("Categoría", ["Todas"] + sorted(df_cat['categoria'].unique().tolist()))
-                df_v = df_cat.copy()
-                if busq: df_v = df_v[df_v['descripcion'].str.contains(busq, case=False) | df_v['sku'].str.contains(busq, case=False)]
-                if cat_s != "Todas": df_v = df_v[df_v['categoria'] == cat_s]
-
+                busq = st.text_input("Buscar producto...")
+                df_v = df_cat[df_cat['descripcion'].str.contains(busq, case=False)] if busq else df_cat
                 for cat in sorted(df_v['categoria'].unique()):
-                    with st.expander(f"{cat}", expanded=True):
+                    with st.expander(cat):
                         itms = df_v[df_v['categoria'] == cat]
                         cols = st.columns(4)
                         for idx, row in itms.reset_index().iterrows():
-                            # LA CLAVE AHORA USA EL ÍNDICE PARA EVITAR DUPLICADOS
-                            unique_key = f"{row['sku']}_{idx}" 
                             with cols[idx % 4]:
                                 with st.container(border=True):
-                                    if row['foto_path'] and os.path.exists(row['foto_path']): st.image(row['foto_path'], use_container_width=True)
+                                    if row['foto_path']: st.image(row['foto_path'], use_container_width=True)
                                     st.write(f"**{row['sku']}**")
-                                    st.caption(row['descripcion'])
-                                    st.write(f"💰 **${row['precio']:.2f}**")
-                                    
-                                    cant = st.number_input("Cantidad:", min_value=1, value=1, key=f"q_{unique_key}")
-                                    if st.button(f"➕ Añadir", key=f"b_{unique_key}", use_container_width=True):
+                                    st.write(f"${row['precio']:.2f}")
+                                    cant = st.number_input("Cant", 1, 100, 1, key=f"q_{row['sku']}_{idx}")
+                                    if st.button("Añadir", key=f"b_{row['sku']}_{idx}"):
                                         st.session_state.carrito[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
-                                        st.toast(f"Agregado: {row['sku']}")
-
+                                        st.toast("Añadido")
         with t2:
-            if not st.session_state.carrito:
-                st.info("Carrito vacío.")
+            if not st.session_state.carrito: st.info("Vacío")
             else:
-                total = 0
                 resumen = []
+                total = 0
                 for sku, info in list(st.session_state.carrito.items()):
-                    with st.container(border=True):
-                        c_a, c_b, c_c, c_d = st.columns([2, 1, 1, 1])
-                        c_a.write(f"**{sku}** - {info['desc']}")
-                        # Edición con llave segura
-                        ncant = c_b.number_input("Cant", min_value=1, value=info['c'], key=f"edit_{sku}")
-                        st.session_state.carrito[sku]['c'] = ncant
-                        sub = info['p'] * ncant
-                        total += sub
-                        c_c.write(f"${sub:.2f}")
-                        if c_d.button("🗑️", key=f"del_{sku}"):
-                            del st.session_state.carrito[sku]; st.rerun()
-                        resumen.append({"SKU": sku, "Descripción": info['desc'], "Precio": info['p'], "Cantidad": ncant, "Subtotal": sub})
-
-                st.write(f"## Total: ${total:.2f}")
-                # Exportar Excel
-                df_ex = pd.DataFrame(resumen)
-                buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine='openpyxl') as w: df_ex.to_excel(w, index=False)
-                st.download_button("📥 Descargar Excel", buf.getvalue(), "Pedido.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    sub = info['p'] * info['c']
+                    total += sub
+                    st.write(f"{sku} - {info['desc']} ({info['c']} x ${info['p']}) = ${sub:.2f}")
+                    resumen.append({"SKU": sku, "Descripción": info['desc'], "Precio": info['p'], "Cantidad": info['c'], "Subtotal": sub})
+                st.write(f"### Total: ${total:.2f}")
                 
-                if st.button("🚀 Procesar Pedido", type="primary", use_container_width=True):
-                    conn = sqlite3.connect(DB_NAME)
-                    conn.execute("INSERT INTO pedidos (username, fecha, items, total, status) VALUES (?,?,?,?,?)",
-                                 (user['user'], datetime.now().strftime("%d/%m/%Y"), json.dumps(resumen), total, "Pendiente"))
-                    conn.commit(); conn.close()
-                    st.session_state.carrito = {}; st.success("¡Pedido enviado!"); st.rerun()
+                if st.button("🚀 Procesar Pedido Web", type="primary"):
+                    with st.spinner("Guardando pedido..."):
+                        conn = sqlite3.connect(DB_NAME)
+                        conn.execute("INSERT INTO pedidos (username, fecha, items, total, status) VALUES (?,?,?,?,?)",
+                                     (user['user'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(resumen), total, "Pendiente"))
+                        conn.commit(); conn.close()
+                        time.sleep(1) # Simulación de carga
+                        st.session_state.carrito = {}
+                        st.success("Pedido registrado correctamente.")
+                        st.rerun()
 
-    # --- RESTO DE FUNCIONES ADMIN ---
-    elif menu == "📊 Pedidos":
+    # --- HISTORIAL DE PEDIDOS (CORREGIDO) ---
+    elif menu in ["📜 Mis Pedidos", "📊 Pedidos Totales"]:
+        st.title("Historial de Pedidos")
         conn = sqlite3.connect(DB_NAME)
-        peds = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", conn)
+        # Si es cliente, solo ve los suyos. Si es admin, ve todos.
+        query = "SELECT * FROM pedidos WHERE username=? ORDER BY id DESC" if user['rol'] == 'cliente' else "SELECT * FROM pedidos ORDER BY id DESC"
+        params = (user['user'],) if user['rol'] == 'cliente' else ()
+        peds = pd.read_sql(query, conn, params=params)
         conn.close()
+        
+        if peds.empty: st.warning("No hay pedidos registrados.")
         for _, p in peds.iterrows():
-            with st.expander(f"Pedido #{p['id']} - {p['username']}"):
+            with st.expander(f"Pedido #{p['id']} - {p['fecha']} - Total: ${p['total']:.2f}"):
                 st.table(pd.DataFrame(json.loads(p['items'])))
+                st.write(f"Estado: **{p['status']}**")
 
+    # --- CARGA PDF ---
     elif menu == "📁 Cargar PDF":
         f = st.file_uploader("PDF", type="pdf")
         if f and st.button("Procesar"):
-            procesar_pdf(f); st.success("Listo"); st.rerun()
-
-    elif menu == "👥 Clientes":
-        with st.form("new_cli"):
-            u, p, n = st.text_input("User"), st.text_input("Pass"), st.text_input("Nombre")
-            if st.form_submit_button("Crear"):
-                conn = sqlite3.connect(DB_NAME)
-                try: 
-                    conn.execute("INSERT INTO usuarios VALUES (?,?,?,?)", (u, p, n, 'cliente'))
-                    conn.commit(); st.success("Creado")
-                except: st.error("Error")
-                conn.close()
+            procesar_pdf(f); st.rerun()
