@@ -213,9 +213,84 @@ else:
 
     # --- GESTIÓN DE CLIENTES ---
     elif menu == "👥 Gestión Clientes":
-        # (Se mantiene igual a tu lógica de edición/creación en base de datos)
-        st.title("👥 Gestión de Clientes")
-        # ... (código previo de gestión de clientes) ...
+        st.title("👥 Panel de Control de Clientes")
+        tab1, tab2 = st.tabs(["📝 Listado y Edición", "➕ Registrar Nuevo Cliente"])
+        
+        with tab1:
+            # Consultamos todos los usuarios que no sean admin
+            df_u = pd.read_sql("SELECT * FROM usuarios WHERE rol != 'admin'", get_connection())
+            
+            if df_u.empty:
+                st.info("No hay clientes registrados en el sistema.")
+            else:
+                for idx, row in df_u.iterrows():
+                    with st.container(border=True):
+                        col_info, col_btn = st.columns([4, 1])
+                        
+                        with col_info:
+                            st.subheader(f"🏢 {row['nombre']}")
+                            c1, c2, c3 = st.columns(3)
+                            c1.write(f"**ID/User:** {row['username']}")
+                            c2.write(f"**Teléfono:** {row['telefono']}")
+                            c3.write(f"**Clave:** `{row['password']}`")
+                            st.write(f"📍 **Dirección:** {row['direccion']}")
+                        
+                        # Botón para activar el modo edición
+                        if col_btn.button("✏️ Editar Datos", key=f"btn_edit_{row['username']}", use_container_width=True):
+                            st.session_state[f"edit_active_{row['username']}"] = True
+
+                        # Formulario de edición (solo aparece si se presiona el botón)
+                        if st.session_state.get(f"edit_active_{row['username']}", False):
+                            st.divider()
+                            with st.form(f"form_edicion_{row['username']}"):
+                                st.write(f"### Editando: {row['nombre']}")
+                                new_nom = st.text_input("Nombre de la Empresa", value=row['nombre'])
+                                new_tel = st.text_input("Teléfono de Contacto", value=row['telefono'])
+                                new_dir = st.text_area("Dirección de Entrega", value=row['direccion'])
+                                new_pass = st.text_input("Cambiar Contraseña", value=row['password'])
+                                
+                                c_save, c_cancel = st.columns(2)
+                                if c_save.form_submit_button("💾 Guardar Cambios", use_container_width=True):
+                                    get_connection().execute(
+                                        "UPDATE usuarios SET nombre=?, telefono=?, direccion=?, password=? WHERE username=?",
+                                        (new_nom, new_tel, new_dir, new_pass, row['username'])
+                                    )
+                                    get_connection().commit()
+                                    st.session_state[f"edit_active_{row['username']}"] = False
+                                    st.success("Información actualizada.")
+                                    time.sleep(1)
+                                    st.rerun()
+                                
+                                if c_cancel.form_submit_button("❌ Cancelar"):
+                                    st.session_state[f"edit_active_{row['username']}"] = False
+                                    st.rerun()
+
+        with tab2:
+            st.subheader("Registrar un nuevo cliente en el sistema")
+            with st.form("nuevo_cliente_form", clear_on_submit=True):
+                col_a, col_b = st.columns(2)
+                n_user = col_a.text_input("Correo o ID de Usuario (Username)")
+                n_pass = col_b.text_input("Contraseña de Acceso")
+                
+                n_nombre = st.text_input("Nombre Completo o Razón Social")
+                n_telefono = st.text_input("Teléfono (Ej: 0414-1234567)")
+                n_direccion = st.text_area("Dirección Fiscal / Despacho")
+                
+                if st.form_submit_button("🚀 Crear Cuenta de Cliente", use_container_width=True):
+                    if n_user and n_pass and n_nombre:
+                        try:
+                            get_connection().execute(
+                                "INSERT INTO usuarios (username, password, nombre, rol, direccion, telefono) VALUES (?,?,?,?,?,?)",
+                                (n_user, n_pass, n_nombre, 'cliente', n_direccion, n_telefono)
+                            )
+                            get_connection().commit()
+                            st.success(f"✅ Cliente '{n_nombre}' registrado correctamente.")
+                            time.sleep(1)
+                            st.rerun()
+                        except sqlite3.IntegrityError:
+                            st.error("Error: El nombre de usuario ya existe.")
+                    else:
+                        st.warning("Por favor completa los campos obligatorios (Usuario, Clave y Nombre).")
 
     # --- CARGA PDF ---
     elif menu == "📁 Cargar PDF":
