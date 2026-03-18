@@ -20,16 +20,20 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     # Tabla de Productos
     conn.execute('CREATE TABLE IF NOT EXISTS productos (sku TEXT, descripcion TEXT, precio REAL, categoria TEXT, foto_path TEXT)')
-    # Tabla de Usuarios (Añadimos columna ROL)
-    conn.execute('CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT)')
+    # Tabla de Usuarios
+    conn.execute('''CREATE TABLE IF NOT EXISTS usuarios 
+                 (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT)''')
     # Tabla de Pedidos
-    conn.execute('CREATE TABLE IF NOT EXISTS pedidos (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)')
+    conn.execute('CREATE TABLE IF NOT EXISTS pedidos 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)')
     
-    # CREAR USUARIO MAESTRO POR DEFECTO SI NO EXISTE
-    cursor = conn.execute("SELECT * FROM usuarios WHERE username='colorinsumos@gmail.com'")
-    if not cursor.fetchone():
-        conn.execute("INSERT INTO usuarios VALUES (?,?,?,?)", 
-                     ('colorinsumos@gmail.com', '20880157', 'Administrador Maestro', 'admin'))
+    # --- CAMBIO AQUÍ: INSERT OR IGNORE ---
+    # Esto evita el error de "Usuario duplicado" al reiniciar la app
+    conn.execute("""
+        INSERT OR IGNORE INTO usuarios (username, password, nombre, rol) 
+        VALUES (?, ?, ?, ?)
+    """, ('colorinsumos@gmail.com', '20880157', 'Administrador Maestro', 'admin'))
+    
     conn.commit()
     conn.close()
 
