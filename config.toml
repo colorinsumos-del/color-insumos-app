@@ -1,0 +1,12 @@
+[server]
+# Esto permite que la app se conecte correctamente desde cualquier navegador
+enableCORS = false
+enableXsrfProtection = false
+
+[theme]
+# Opcional: Puedes ponerle los colores de tu marca aquí
+primaryColor = "#F63366"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
