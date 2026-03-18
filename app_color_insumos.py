@@ -27,7 +27,7 @@ def obtener_catalogo_cache():
     conn = get_connection()
     return pd.read_sql("SELECT * FROM productos", conn)
 
-# --- FUNCIÓN DE EXTRACCIÓN REFORZADA (BCV DINÁMICO) ---
+# --- FUNCIÓN DE EXTRACCIÓN (CALIBRADA PARA 'PRECIO BCV') ---
 def procesar_pdf_bcv(file):
     conn = get_connection()
     productos_cargados = 0
@@ -38,12 +38,12 @@ def procesar_pdf_bcv(file):
             for table in tables:
                 if not table: continue
                 
-                # Buscamos dinámicamente la columna BCV en las primeras filas
+                # Buscamos la columna que contenga "PRECIO BCV"
                 col_bcv = -1
                 for row_idx in range(min(5, len(table))):
                     row_cells = [str(c).upper() if c else "" for c in table[row_idx]]
                     for i, cell in enumerate(row_cells):
-                        if "BCV" in cell:
+                        if "PRECIO BCV" in cell or "BCV" in cell:
                             col_bcv = i
                             break
                     if col_bcv != -1: break
@@ -53,34 +53,34 @@ def procesar_pdf_bcv(file):
                         if not row or len(row) <= col_bcv: continue
                         
                         sku = str(row[0]).strip() if row[0] else ""
-                        # Filtro más inteligente: solo saltar si es literalmente la palabra "SKU" o está vacío
-                        if not sku or sku.upper() in ["SKU", "CODIGO", "ITEM", "PRODUCTO"]:
+                        # Filtro para saltar encabezados
+                        if not sku or sku.upper() in ["SKU", "CODIGO", "ITEM", "PRODUCTO", "PRECIO BCV"]:
                             continue
                         
                         descripcion = str(row[1]).strip() if row[1] else ""
                         precio_raw = str(row[col_bcv]).strip() if row[col_bcv] else ""
                         
-                        # Extraer números, manejando puntos de miles y comas de decimales
+                        # Limpieza de precio para formatos 1.250,50 o 1250,50
                         precio_match = re.search(r'[\d.,]+', precio_raw)
                         if precio_match:
                             try:
                                 p_str = precio_match.group(0)
-                                # Lógica para 1.250,50 o 1,250.50
+                                # Convertir formato visual a número real
                                 if "," in p_str and "." in p_str:
-                                    if p_str.rfind(",") > p_str.rfind("."): # Caso 1.250,50
+                                    if p_str.rfind(",") > p_str.rfind("."): 
                                         p_str = p_str.replace(".", "").replace(",", ".")
-                                    else: # Caso 1,250.50
+                                    else:
                                         p_str = p_str.replace(",", "")
-                                elif "," in p_str: # Caso 1250,50
+                                elif "," in p_str:
                                     p_str = p_str.replace(",", ".")
                                 
                                 precio_final = float(p_str)
                                 
-                                # INSERT OR REPLACE asegura que si el SKU existe, se actualice el precio
+                                # INSERT OR REPLACE actualiza si el SKU ya existe
                                 conn.execute("""
                                     INSERT OR REPLACE INTO productos (sku, descripcion, precio, categoria) 
-                                    VALUES (?, ?, ?, (SELECT categoria FROM productos WHERE sku = ? LIMIT 1) || 'General')
-                                """, (sku, descripcion, precio_final, sku))
+                                    VALUES (?, ?, ?, 'General')
+                                """, (sku, descripcion, precio_final))
                                 productos_cargados += 1
                             except:
                                 continue
@@ -112,17 +112,19 @@ def generar_pdf_pedido(id_pedido, fecha, usuario, items, total):
     pdf.cell(190, 10, f"TOTAL FINAL: ${total:.2f}", ln=True, align="R")
     return bytes(pdf.output())
 
-# --- BASE DE DATOS ---
+# --- BASE DE DATOS (IMPORTANTE: SKU COMO PRIMARY KEY) ---
 def init_db():
     conn = get_connection()
+    # Definimos SKU como PRIMARY KEY para que el UPDATE funcione
     conn.execute('''CREATE TABLE IF NOT EXISTS productos 
                  (sku TEXT PRIMARY KEY, descripcion TEXT, precio REAL, categoria TEXT, foto_path TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS usuarios 
-                 (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT, direccion TEXT DEFAULT '', telefono TEXT DEFAULT '')''')
+                 (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT, direccion TEXT, telefono TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS pedidos 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS carrito_items 
-                 (username TEXT, sku TEXT, descripcion TEXT, precio REAL, cantidad INTEGER, PRIMARY KEY (username, sku))''')
+                 (username TEXT, sku TEXT, descripcion TEXT, precio REAL, cantidad INTEGER, 
+                  PRIMARY KEY (username, sku))''')
     conn.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre, rol) VALUES (?,?,?,?)", 
                  ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin'))
     conn.commit()
@@ -130,7 +132,8 @@ def init_db():
 # --- FUNCIONES DE CARRITO ---
 def guardar_item_carrito(username, row, cant):
     conn = get_connection()
-    conn.execute("INSERT OR REPLACE INTO carrito_items VALUES (?,?,?,?,?)", (username, row['sku'], row['descripcion'], row['precio'], cant))
+    conn.execute("INSERT OR REPLACE INTO carrito_items VALUES (?,?,?,?,?)", 
+                 (username, row['sku'], row['descripcion'], row['precio'], cant))
     conn.commit()
 
 def eliminar_item_carrito(username, sku):
@@ -170,13 +173,13 @@ def card_producto(row, idx):
             st.toast("✅ Añadido")
             time.sleep(0.5); st.rerun()
 
-# --- LÓGICA DE NAVEGACIÓN ---
+# --- NAVEGACIÓN ---
 init_db()
 if 'auth' not in st.session_state: st.session_state.auth = False
 
 if not st.session_state.auth:
     st.title("🚀 Acceso Color Insumos")
-    u = st.text_input("Usuario").strip()
+    u = st.text_input("Usuario (Email)").strip()
     p = st.text_input("Clave", type="password")
     if st.button("Entrar", type="primary"):
         res = get_connection().execute("SELECT username, password, nombre, rol FROM usuarios WHERE username=?", (u,)).fetchone()
@@ -184,7 +187,7 @@ if not st.session_state.auth:
             st.session_state.auth = True
             st.session_state.user_data = {"user": res[0], "nombre": res[2], "rol": res[3]}
             st.rerun()
-        else: st.error("Error de acceso")
+        else: st.error("Acceso denegado")
 else:
     user = st.session_state.user_data
     carrito_actual = obtener_carrito_db(user['user'])
@@ -200,11 +203,11 @@ else:
 
     # --- TIENDA ---
     if "🛒" in menu or "Comprar" in menu:
-        t1, t2 = st.tabs(["🛍️ Catálogo", "🧾 Carrito"])
+        t1, t2 = st.tabs(["🛍️ Catálogo", "🧾 Mi Carrito"])
         with t1:
             df = obtener_catalogo_cache()
             c1, c2 = st.columns([2, 1])
-            busq = c1.text_input("🔍 SKU...")
+            busq = c1.text_input("🔍 Buscar SKU...")
             cat_sel = c2.selectbox("Categoría", ["Todos"] + sorted(df['categoria'].unique().tolist()))
             df_v = df.copy()
             if busq: df_v = df_v[df_v['sku'].str.contains(busq, case=False)]
@@ -213,7 +216,7 @@ else:
             for idx, row in df_v.reset_index().iterrows():
                 with cols[idx % 4]: card_producto(row, idx)
         with t2:
-            if not carrito_actual: st.info("Vacío")
+            if not carrito_actual: st.info("Carrito vacío.")
             else:
                 total = 0; resumen = []
                 for sku, info in carrito_actual.items():
@@ -221,34 +224,35 @@ else:
                     st.write(f"**{sku}** - {info['desc']} (${sub:.2f})")
                     if st.button("🗑️", key=f"rm_{sku}"): eliminar_item_carrito(user['user'], sku); st.rerun()
                     resumen.append({"SKU": sku, "Desc": info['desc'], "Cant": info['c'], "Subtotal": sub})
-                if st.button("🚀 Confirmar Total: $" + str(round(total, 2))):
+                st.write(f"## Total: ${total:.2f}")
+                if st.button("🚀 Confirmar Pedido", use_container_width=True, type="primary"):
                     get_connection().execute("INSERT INTO pedidos (username, fecha, items, total, status) VALUES (?,?,?,?,?)",
                                  (user['user'], datetime.now().strftime("%d/%m/%y %H:%M"), json.dumps(resumen), total, "Pendiente"))
-                    get_connection().commit(); limpiar_carrito(user['user']); st.success("Pedido enviado"); time.sleep(1); st.rerun()
+                    get_connection().commit(); limpiar_carrito(user['user']); st.success("Enviado"); time.sleep(1); st.rerun()
 
-    # --- PEDIDOS TOTALES (ADMIN) ---
+    # --- PEDIDOS TOTALES ---
     elif menu == "📊 Pedidos Totales":
-        st.title("📊 Pedidos")
+        st.title("📊 Control de Pedidos")
         peds = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", get_connection())
         for _, p in peds.iterrows():
-            with st.expander(f"Pedido #{p['id']} - {p['username']}"):
+            with st.expander(f"📦 Pedido #{p['id']} - {p['username']}"):
                 items = json.loads(p['items']); st.table(pd.DataFrame(items))
                 pdf_b = generar_pdf_pedido(p['id'], p['fecha'], p['username'], items, p['total'])
-                st.download_button("📄 PDF", data=pdf_b, file_name=f"Ped_{p['id']}.pdf", key=f"d_{p['id']}")
+                st.download_button("📄 PDF", data=pdf_b, file_name=f"Pedido_{p['id']}.pdf", key=f"p_{p['id']}")
 
     # --- GESTIÓN CLIENTES ---
     elif menu == "👥 Gestión Clientes":
-        st.title("👥 Clientes")
+        st.title("👥 Listado de Clientes")
         df_u = pd.read_sql("SELECT * FROM usuarios WHERE rol != 'admin'", get_connection())
-        st.dataframe(df_u)
+        st.table(df_u[['username', 'nombre', 'telefono']])
 
     # --- CARGA PDF ---
     elif menu == "📁 Cargar PDF":
-        st.title("📁 Actualizar Catálogo")
-        f = st.file_uploader("PDF con columna BCV", type="pdf")
-        if f and st.button("🚀 Procesar y Actualizar"):
-            with st.spinner("Actualizando base de datos..."):
+        st.title("📁 Actualizar Precios (PRECIO BCV)")
+        f = st.file_uploader("Subir PDF", type="pdf")
+        if f and st.button("🚀 Procesar"):
+            with st.spinner("Actualizando..."):
                 cant = procesar_pdf_bcv(f)
                 if cant > 0:
-                    st.success(f"✅ Se actualizaron {cant} registros."); time.sleep(2); st.rerun()
-                else: st.error("No se detectó la columna 'BCV'.")
+                    st.success(f"✅ Se actualizaron {cant} productos."); time.sleep(2); st.rerun()
+                else: st.error("No se encontró la columna 'PRECIO BCV'.")
