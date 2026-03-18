@@ -5,6 +5,8 @@ import os
 import io
 import json
 import time
+import re
+import pdfplumber
 from datetime import datetime
 from fpdf import FPDF
 
@@ -25,21 +27,59 @@ def obtener_catalogo_cache():
     conn = get_connection()
     return pd.read_sql("SELECT * FROM productos", conn)
 
+# --- FUNCIÓN DE EXTRACCIÓN BCV (NUEVA LÓGICA) ---
+def procesar_pdf_bcv(file):
+    conn = get_connection()
+    productos_cargados = 0
+    
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if not text:
+                continue
+            
+            lines = text.split('\n')
+            for line in lines:
+                # Buscamos solo líneas que contengan explícitamente "BCV" para evitar tablas ocultas
+                if "BCV" in line.upper():
+                    try:
+                        # Capturamos SKU, Descripción (hasta antes de BCV) y el precio después de BCV
+                        match_sku_desc = re.match(r'^(\S+)\s+(.+?)(?=BCV)', line, re.IGNORECASE)
+                        match_precio = re.search(r'BCV\s*[:$]?\s*([\d.,]+)', line, re.IGNORECASE)
+                        
+                        if match_sku_desc and match_precio:
+                            sku = match_sku_desc.group(1).strip()
+                            descripcion = match_sku_desc.group(2).strip()
+                            precio_raw = match_precio.group(1)
+                            
+                            # Limpieza de formato: 1.250,50 -> 1250.50
+                            precio_clean = precio_raw.replace('.', '').replace(',', '.')
+                            precio_final = float(precio_clean)
+                            
+                            conn.execute("""
+                                INSERT OR REPLACE INTO productos (sku, descripcion, precio, categoria) 
+                                VALUES (?, ?, ?, ?)
+                            """, (sku, descripcion, precio_final, "General"))
+                            productos_cargados += 1
+                    except:
+                        continue
+    
+    conn.commit()
+    st.cache_data.clear() 
+    return productos_cargados
+
 # --- GENERADOR DE PDF CORREGIDO ---
 def generar_pdf_pedido(id_pedido, fecha, usuario, items, total):
     pdf = FPDF()
     pdf.add_page()
-    # Usamos Helvetica para evitar errores de fuentes en algunos sistemas
     pdf.set_font("helvetica", "B", 16)
     
-    # Encabezado
     pdf.cell(190, 10, "COLOR INSUMOS - REPORTE DE PEDIDO", ln=True, align="C")
     pdf.set_font("helvetica", "", 12)
     pdf.cell(190, 10, f"Pedido #: {id_pedido} | Fecha: {fecha}", ln=True, align="C")
     pdf.cell(190, 10, f"Cliente: {usuario}", ln=True, align="C")
     pdf.ln(10)
     
-    # Tabla
     pdf.set_font("helvetica", "B", 10)
     pdf.cell(30, 10, "SKU", 1)
     pdf.cell(90, 10, "Descripcion", 1)
@@ -49,7 +89,6 @@ def generar_pdf_pedido(id_pedido, fecha, usuario, items, total):
     
     pdf.set_font("helvetica", "", 9)
     for item in items:
-        # Aseguramos que los datos existan para evitar errores de diccionario
         sku = str(item.get('SKU', 'N/A'))
         desc = str(item.get('Desc', ''))[:45]
         cant = str(item.get('Cant', '0'))
@@ -65,7 +104,6 @@ def generar_pdf_pedido(id_pedido, fecha, usuario, items, total):
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(190, 10, f"TOTAL FINAL: ${total:.2f}", ln=True, align="R")
     
-    # fpdf2.output() sin argumentos devuelve un bytearray, lo pasamos a bytes para Streamlit
     return bytes(pdf.output())
 
 # --- BASE DE DATOS E INICIALIZACIÓN ---
@@ -81,7 +119,6 @@ def init_db():
                  (username TEXT, sku TEXT, descripcion TEXT, precio REAL, cantidad INTEGER, 
                   PRIMARY KEY (username, sku))''')
     
-    # Admin por defecto
     conn.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre, rol) VALUES (?,?,?,?)", 
                  ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin'))
     conn.commit()
@@ -201,7 +238,6 @@ else:
     # --- MIS PEDIDOS (CLIENTE) ---
     elif menu == "📜 Mis Pedidos":
         st.title("📜 Historial de Pedidos")
-        # Consulta filtrada por el usuario logueado
         mis_peds = pd.read_sql("SELECT * FROM pedidos WHERE username=? ORDER BY id DESC", get_connection(), params=(user['user'],))
         if mis_peds.empty:
             st.info("No has realizado pedidos aún.")
@@ -221,14 +257,12 @@ else:
                 st.write(f"### Total: ${p['total']:.2f}")
                 
                 c1, c2, c3 = st.columns(3)
-                # GENERACIÓN DE PDF SIN ERRORES
                 try:
                     pdf_bytes = generar_pdf_pedido(p['id'], p['fecha'], p['username'], items_list, p['total'])
                     c1.download_button("📄 Descargar PDF", data=pdf_bytes, file_name=f"Pedido_{p['id']}.pdf", key=f"pdf_btn_{p['id']}", mime="application/pdf")
-                except Exception as e:
+                except:
                     c1.error("Error al crear PDF")
                 
-                # EXCEL
                 output_xl = io.BytesIO()
                 with pd.ExcelWriter(output_xl, engine='openpyxl') as writer:
                     pd.DataFrame(items_list).to_excel(writer, index=False)
@@ -238,13 +272,12 @@ else:
                     get_connection().execute("DELETE FROM pedidos WHERE id=?", (p['id'],))
                     get_connection().commit(); st.rerun()
 
-    # --- GESTIÓN DE CLIENTES (RESTAURADA Y MEJORADA) ---
+    # --- GESTIÓN DE CLIENTES ---
     elif menu == "👥 Gestión Clientes":
         st.title("👥 Control Maestro de Clientes")
         tab_list, tab_new = st.tabs(["📝 Listado y Edición", "➕ Registrar Nuevo Cliente"])
         
         with tab_list:
-            # Consultamos todos los usuarios que no sean admin
             conn = get_connection()
             df_u = pd.read_sql("SELECT * FROM usuarios WHERE rol != 'admin' ORDER BY nombre ASC", conn)
             
@@ -252,7 +285,6 @@ else:
                 st.info("No hay clientes registrados.")
             else:
                 for idx, row in df_u.iterrows():
-                    # Usamos un identificador único para el contenedor y botones
                     u_id = row['username']
                     with st.container(border=True):
                         c1, c2 = st.columns([3, 1])
@@ -263,11 +295,9 @@ else:
                             st.write(f"📞 **Teléfono:** {row['telefono'] if row['telefono'] else 'No asignado'}")
                             st.write(f"📍 **Dirección:** {row['direccion'] if row['direccion'] else 'No asignada'}")
                         
-                        # Botón para activar modo edición específico para este usuario
                         if c2.button("✏️ Editar Datos", key=f"btn_ed_{u_id}", use_container_width=True):
                             st.session_state[f"edit_active_{u_id}"] = True
 
-                        # Formulario de edición que aparece al presionar el botón
                         if st.session_state.get(f"edit_active_{u_id}", False):
                             with st.form(f"form_edit_{u_id}"):
                                 st.write(f"### Modificando cuenta: {u_id}")
@@ -283,8 +313,7 @@ else:
                                     conn.commit()
                                     st.session_state[f"edit_active_{u_id}"] = False
                                     st.success(f"✅ Datos de {u_id} actualizados.")
-                                    time.sleep(1)
-                                    st.rerun()
+                                    time.sleep(1); st.rerun()
                                 
                                 if col_f2.form_submit_button("❌ Cancelar", use_container_width=True):
                                     st.session_state[f"edit_active_{u_id}"] = False
@@ -293,8 +322,6 @@ else:
         with tab_new:
             with st.form("nuevo_cliente_completo"):
                 st.subheader("Crear Nueva Cuenta de Cliente")
-                st.write("Completa los datos para habilitar el acceso al catálogo.")
-                
                 new_u = st.text_input("ID de Usuario o Email (Para el Login)")
                 new_p = st.text_input("Contraseña de Acceso")
                 new_n = st.text_input("Nombre de la Empresa o Cliente")
@@ -311,15 +338,27 @@ else:
                             )
                             conn.commit()
                             st.success(f"✅ Cliente '{new_n}' registrado con éxito.")
-                            time.sleep(1)
-                            st.rerun()
+                            time.sleep(1); st.rerun()
                         except sqlite3.IntegrityError:
                             st.error("❌ Error: Ese nombre de usuario ya está registrado.")
                     else:
                         st.warning("⚠️ Los campos Usuario, Clave y Nombre son obligatorios.")
 
-    # --- CARGA PDF ---
+    # --- CARGA PDF (CON BOTÓN DE PROCESAR Y LÓGICA BCV) ---
     elif menu == "📁 Cargar PDF":
-        st.title("📁 Actualizar Catálogo")
-        st.info("Usa esta sección para procesar nuevos listados de precios.")
-        f = st.file_uploader("Subir PDF", type="pdf")
+        st.title("📁 Actualizar Catálogo (Precio BCV)")
+        st.info("Sube el PDF. El sistema extraerá el nombre y el precio exclusivamente de la columna **BCV**.")
+        
+        f = st.file_uploader("Seleccionar archivo PDF", type="pdf")
+        
+        if f is not None:
+            # BOTÓN DE PROCESAR AÑADIDO E INTEGRADO
+            if st.button("🚀 Iniciar Procesamiento de PDF", use_container_width=True, type="primary"):
+                with st.spinner("Extrayendo precios BCV e ignorando tablas ocultas..."):
+                    cantidad = procesar_pdf_bcv(f)
+                    if cantidad > 0:
+                        st.success(f"✅ ¡Éxito! Se cargaron/actualizaron {cantidad} productos con el precio BCV.")
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.error("No se detectaron productos. Verifica que el PDF contenga la palabra 'BCV'.")
