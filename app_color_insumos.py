@@ -93,7 +93,7 @@ def generar_pdf_recibo(pedido, info_cliente):
     for i in items:
         p = i.get('Precio', i.get('precio', 0))
         c = i.get('Cant', i.get('cant', 0))
-        data.append([i.get('SKU', i.get('sku')), i.get('Desc', i.get('desc')), c, f"${p:.2f}", f"${p*c:.2f}"])
+        data.append([i.get('sku', i.get('SKU')), i.get('desc', i.get('Desc')), c, f"${p:.2f}", f"${p*c:.2f}"])
 
     t = Table(data, colWidths=[60, 240, 40, 60, 60])
     t.setStyle(TableStyle([
@@ -106,6 +106,8 @@ def generar_pdf_recibo(pedido, info_cliente):
     elements.append(t)
     
     elements.append(Spacer(1, 15))
+    elements.append(Paragraph(f"<b>SUBTOTAL: ${pedido.get('subtotal', 0):.2f}</b>", styles['Normal']))
+    elements.append(Paragraph(f"<b>DESCUENTO APLICADO: ${pedido.get('descuento', 0):.2f}</b>", styles['Normal']))
     elements.append(Paragraph(f"<b>TOTAL A PAGAR: ${pedido['total']:.2f}</b>", styles['Normal']))
     doc.build(elements)
     return buffer.getvalue()
@@ -150,7 +152,7 @@ if 'carritos' not in st.session_state: st.session_state.carritos = {}
 if not st.session_state.auth:
     st.title("🔐 Acceso Color Insumos")
     u = st.text_input("Usuario")
-    p = st.text_input("Clave", type="password")
+    p = st.text_input("Contraseña", type="password")
     if st.button("Entrar", type="primary"):
         res = get_connection().execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u, p)).fetchone()
         if res:
@@ -206,15 +208,22 @@ else:
                 items_p.append({"sku": sku, "desc": info['desc'], "cant": info['c'], "precio": info['p']})
 
             st.divider()
-            metodo = st.radio("Pago", ["Transferencia BS", "Divisas / Zelle (-10%)"])
-            desc = 0.10 if "Divisas" in metodo else 0.0
-            total_n = total_b * (1 - desc)
-            st.write(f"### Total: ${total_n:.2f}")
+            # REGLA DE DESCUENTO
+            metodo = st.radio("Método de Pago", ["Transferencia BS", "Divisas / Zelle (-10% Descuento)"])
+            es_divisa = "Divisas" in metodo
+            porcentaje_desc = 0.10 if es_divisa else 0.0
+            monto_descuento = total_b * porcentaje_desc
+            total_n = total_b - monto_descuento
+            
+            c1, c2 = st.columns(2)
+            c1.metric("Subtotal", f"${total_b:.2f}")
+            c2.metric("Descuento", f"-${monto_descuento:.2f}", delta_color="normal")
+            st.write(f"### Total Final: ${total_n:.2f}")
 
             if st.button("Confirmar Pedido ✅", type="primary", use_container_width=True):
                 get_connection().execute(
                     "INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(items_p), metodo, total_b, total_b*desc, total_n, "Pendiente")
+                    (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(items_p), metodo, total_b, monto_descuento, total_n, "Pendiente")
                 )
                 get_connection().commit()
                 st.session_state.carritos[uid] = {}; st.success("Pedido enviado!"); time.sleep(1); st.rerun()
@@ -266,11 +275,41 @@ else:
 
     elif menu == "👥 Clientes":
         st.title("👥 Gestión de Clientes")
-        clientes = pd.read_sql("SELECT username, nombre, telefono, direccion FROM usuarios WHERE rol='cliente'", get_connection())
-        st.dataframe(clientes, use_container_width=True)
-        with st.form("reg"):
-            u_n, p_n, n_n, t_n = st.text_input("Usuario"), st.text_input("Clave"), st.text_input("Nombre"), st.text_input("Tlf")
-            d_n = st.text_area("Dirección")
-            if st.form_submit_button("Guardar"):
-                get_connection().execute("INSERT INTO usuarios VALUES (?,?,?,?,?,?)", (u_n, p_n, n_n, 'cliente', d_n, t_n))
-                get_connection().commit(); st.rerun()
+        
+        # Formulario para registro nuevo
+        with st.expander("➕ Registrar Nuevo Cliente"):
+            with st.form("reg_nuevo"):
+                u_n, p_n, n_n, t_n = st.text_input("Usuario (Email)"), st.text_input("Clave"), st.text_input("Nombre"), st.text_input("Tlf")
+                d_n = st.text_area("Dirección")
+                if st.form_submit_button("Guardar"):
+                    get_connection().execute("INSERT INTO usuarios VALUES (?,?,?,?,?,?)", (u_n, p_n, n_n, 'cliente', d_n, t_n))
+                    get_connection().commit(); st.success("Cliente registrado"); st.rerun()
+        
+        st.divider()
+        st.subheader("Lista de Clientes Registrados")
+        df_clientes = pd.read_sql("SELECT * FROM usuarios WHERE rol='cliente'", get_connection())
+        
+        for _, cli in df_clientes.iterrows():
+            with st.expander(f"👤 {cli['nombre']} ({cli['username']})"):
+                with st.form(key=f"edit_{cli['username']}"):
+                    c1, c2 = st.columns(2)
+                    edit_nom = c1.text_input("Nombre", value=cli['nombre'])
+                    edit_pass = c2.text_input("Clave", value=cli['password'])
+                    edit_tlf = c1.text_input("Teléfono", value=cli['telefono'])
+                    edit_dir = st.text_area("Dirección", value=cli['direccion'])
+                    
+                    col_b1, col_b2 = st.columns(2)
+                    if col_b1.form_submit_button("💾 Guardar Cambios"):
+                        get_connection().execute(
+                            "UPDATE usuarios SET nombre=?, password=?, telefono=?, direccion=? WHERE username=?",
+                            (edit_nom, edit_pass, edit_tlf, edit_dir, cli['username'])
+                        )
+                        get_connection().commit()
+                        st.success("Actualizado")
+                        st.rerun()
+                    
+                    if col_b2.form_submit_button("🗑️ Eliminar Cliente"):
+                        get_connection().execute("DELETE FROM usuarios WHERE username=?", (cli['username'],))
+                        get_connection().commit()
+                        st.warning("Cliente eliminado")
+                        st.rerun()
