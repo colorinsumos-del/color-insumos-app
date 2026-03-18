@@ -112,33 +112,46 @@ else:
             st.session_state.auth = False
             st.rerun()
 
-    # --- MÓDULO TIENDA (OPTIMIZADO CON FILTROS DIRECTOS) ---
+    # --- MÓDULO TIENDA (ULTRA RÁPIDO Y CORREGIDO) ---
     if menu == "🛍️ Tienda":
         st.title("🛍️ Catálogo Color Insumos")
-        df = cargar_catalogo()
         
-        if df.empty: 
-            st.info("Sube un PDF para activar el inventario.")
-        else:
-            # --- BARRA DE HERRAMIENTAS (Búsqueda + Filtro + Reset) ---
+        # --- BUSCADOR Y FILTROS ---
+        with st.container(border=True):
             col_busq, col_cat, col_reset = st.columns([2, 1, 0.5])
             
             with col_busq:
-                busq = st.text_input("🔍 Buscar por SKU o Descripción...", key="input_busq")
+                # Usamos una clave simple. Si queremos resetear, Streamlit lo maneja mejor con el botón.
+                busq = st.text_input("🔍 Buscar por SKU o Descripción...", placeholder="Escribe algo para buscar...")
             
             with col_cat:
-                lista_cats = ["Todas"] + sorted(df['categoria'].unique().tolist())
-                cat_sel = st.selectbox("📂 Categoría", lista_cats, key="sel_cat")
+                # Obtenemos categorías solo para el selector
+                conn = get_connection()
+                res_cats = conn.execute("SELECT DISTINCT categoria FROM productos").fetchall()
+                lista_cats = ["Seleccionar Categoría"] + sorted([r[0] for r in res_cats])
+                cat_sel = st.selectbox("📂 Filtrar por Departamento", lista_cats)
             
             with col_reset:
-                st.write(" ") # Espaciador para alinear con los inputs
-                if st.button("🔄 Reset", use_container_width=True):
-                    # Al resetear, limpiamos los valores en session_state
-                    st.session_state.input_busq = ""
-                    st.session_state.sel_cat = "Todas"
+                st.write(" ")
+                if st.button("🔄 Limpiar", use_container_width=True):
                     st.rerun()
 
-            # --- LÓGICA DE FILTRADO ---
+        st.divider()
+
+        # --- LÓGICA DE VISUALIZACIÓN ---
+        # Si no hay búsqueda ni categoría seleccionada, mostramos bienvenida
+        if not busq and (cat_sel == "Seleccionar Categoría"):
+            st.markdown("""
+                ### 👋 ¡Bienvenido al Catálogo Virtual!
+                Para comenzar a armar tu pedido, utiliza las herramientas de arriba:
+                1. **Escribe** el nombre de un producto o su SKU.
+                2. **O selecciona** una categoría específica para ver los artículos disponibles.
+                
+                *Esto hace que la aplicación cargue más rápido y ahorres datos.*
+            """)
+        else:
+            # Solo cargamos los datos de la DB si hay algo que buscar
+            df = cargar_catalogo()
             df_filtrado = df.copy()
             
             if busq:
@@ -147,51 +160,17 @@ else:
                     df_filtrado['sku'].str.contains(busq, case=False)
                 ]
             
-            if cat_sel != "Todas":
+            if cat_sel != "Seleccionar Categoría":
                 df_filtrado = df_filtrado[df_filtrado['categoria'] == cat_sel]
 
-            # --- VISUALIZACIÓN DE PRODUCTOS ---
-            st.divider()
             if df_filtrado.empty:
-                st.warning("No se encontraron productos con esos filtros.")
+                st.warning("No encontramos coincidencias. Intenta con otra palabra.")
             else:
-                st.caption(f"Mostrando {len(df_filtrado)} productos")
-                
-                # Cuadrícula de productos sin expanders
+                st.caption(f"Resultados encontrados: {len(df_filtrado)}")
                 cols = st.columns(4)
                 for i, (_, row) in enumerate(df_filtrado.iterrows()):
                     with cols[i % 4]:
                         card_producto(row, i)
-
-    elif "🛒" in menu:
-        st.title("🛒 Carrito de Compras")
-        if not carrito_actual: st.warning("Tu carrito está vacío.")
-        else:
-            total = 0
-            items_pedido = []
-            for sku, info in list(carrito_actual.items()):
-                sub = info['p'] * info['c']
-                total += sub
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns([3, 1, 1])
-                    c1.write(f"**{sku}**\n{info['desc']}")
-                    c2.write(f"${sub:.2f}")
-                    if c3.button("🗑️", key=f"del_{sku}"):
-                        del st.session_state.carritos[user['user']][sku]
-                        st.rerun()
-                items_pedido.append({"SKU": sku, "Cant": info['c'], "Precio": info['p']})
-            
-            st.divider()
-            divisas = st.toggle("Pagar en Divisas (Aplica Descuento especial)")
-            final = total * 0.7 if divisas else total # 30% desc si es divisas
-            st.write(f"### Total a Pagar: ${final:.2f}")
-            if st.button("Confirmar Pedido", type="primary", use_container_width=True):
-                get_connection().execute("INSERT INTO pedidos (username, fecha, items, total, status) VALUES (?,?,?,?,?)",
-                             (user['user'], datetime.now().strftime("%d/%m/%Y"), json.dumps(items_pedido), final, "Pendiente"))
-                get_connection().commit()
-                st.session_state.carritos[user['user']] = {}
-                st.success("Pedido enviado con éxito.")
-                time.sleep(1); st.rerun()
 
     elif menu == "📁 Cargar PDF":
         st.title("📁 Carga Masiva (Lista POINTER)")
