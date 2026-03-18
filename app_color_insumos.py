@@ -130,7 +130,7 @@ else:
             nav = [cart_lbl, "📊 Pedidos Totales", "📁 Cargar PDF", "👥 Gestión Clientes"]
         menu = st.radio("Navegación", nav)
 
-   # --- TIENDA ---
+    # --- TIENDA ---
     if "🛒" in menu:
         t1, t2 = st.tabs(["🛍️ Catálogo", "🧾 Mi Carrito"])
         with t1:
@@ -138,33 +138,38 @@ else:
             c1, c2 = st.columns([2, 1])
             busq = c1.text_input("🔍 Buscar SKU o Nombre...")
             
-            # Obtener categorías únicas para el desplegable
-            cats = ["Todas"] + sorted(df['categoria'].unique().tolist())
+            cats = ["Seleccionar Categoría"] + sorted(df['categoria'].unique().tolist())
             cat_sel = c2.selectbox("Filtrar por Categoría", cats)
             
-            # Aplicar filtros
-            df_v = df.copy()
-            if busq:
-                df_v = df_v[df_v['descripcion'].str.contains(busq, case=False) | df_v['sku'].str.contains(busq, case=False)]
-            
-            if cat_sel != "Todas":
-                df_v = df_v[df_v['categoria'] == cat_sel]
-
-            st.divider()
-
-            # MOSTRAR RESULTADOS (Sin el bucle de expanders)
-            if df_v.empty:
-                st.warning("No se encontraron productos con esos criterios.")
-            else:
-                # Mostramos un título dinámico según la selección
-                titulo = f"Mostrando: {cat_sel}" if cat_sel != "Todas" else "Todos los Productos"
-                st.subheader(titulo)
+            # --- LÓGICA DE VISUALIZACIÓN CONDICIONAL ---
+            # Solo procesamos si el usuario buscó algo o seleccionó una categoría real
+            if busq or (cat_sel != "Seleccionar Categoría"):
+                df_v = df.copy()
                 
-                cols = st.columns(4)
-                for idx, row in df_v.reset_index().iterrows():
-                    with cols[idx % 4]:
-                        card_producto(row, idx)
+                if busq:
+                    df_v = df_v[df_v['descripcion'].str.contains(busq, case=False) | 
+                                df_v['sku'].str.contains(busq, case=False)]
+                
+                if cat_sel != "Seleccionar Categoría":
+                    df_v = df_v[df_v['categoria'] == cat_sel]
 
+                st.divider()
+
+                if df_v.empty:
+                    st.warning("No se encontraron productos.")
+                else:
+                    st.subheader(f"📦 Resultados ({len(df_v)} productos)")
+                    cols = st.columns(4)
+                    for idx, row in df_v.reset_index().iterrows():
+                        with cols[idx % 4]:
+                            card_producto(row, idx)
+            else:
+                # Mensaje de bienvenida cuando no hay filtros
+                st.info("👋 ¡Hola! Por favor, usa el buscador o selecciona una categoría para ver los productos.")
+                
+                # Opcional: Mostrar algunos destacados o iconos de ayuda
+                st.caption("Tip: Puedes buscar por marca (Epson, HP, Canon) o por código SKU.")
+                
         with t2:
             if not carrito_actual: st.info("Carrito vacío.")
             else:
