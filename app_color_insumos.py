@@ -105,10 +105,15 @@ def generar_pdf_recibo(pedido, info_cliente):
     ]))
     elements.append(t)
     
+    # Manejo de nulos para evitar TypeError
+    sub = pedido.get('subtotal') if pedido.get('subtotal') is not None else 0.0
+    desc = pedido.get('descuento') if pedido.get('descuento') is not None else 0.0
+    tot = pedido.get('total') if pedido.get('total') is not None else 0.0
+
     elements.append(Spacer(1, 15))
-    elements.append(Paragraph(f"<b>SUBTOTAL: ${pedido.get('subtotal', 0):.2f}</b>", styles['Normal']))
-    elements.append(Paragraph(f"<b>DESCUENTO APLICADO: ${pedido.get('descuento', 0):.2f}</b>", styles['Normal']))
-    elements.append(Paragraph(f"<b>TOTAL A PAGAR: ${pedido['total']:.2f}</b>", styles['Normal']))
+    elements.append(Paragraph(f"<b>SUBTOTAL: ${sub:.2f}</b>", styles['Normal']))
+    elements.append(Paragraph(f"<b>DESCUENTO APLICADO: ${desc:.2f}</b>", styles['Normal']))
+    elements.append(Paragraph(f"<b>TOTAL A PAGAR: ${tot:.2f}</b>", styles['Normal']))
     doc.build(elements)
     return buffer.getvalue()
 
@@ -208,16 +213,22 @@ else:
                 items_p.append({"sku": sku, "desc": info['desc'], "cant": info['c'], "precio": info['p']})
 
             st.divider()
-            # REGLA DE DESCUENTO
-            metodo = st.radio("Método de Pago", ["Transferencia BS", "Divisas / Zelle (-10% Descuento)"])
-            es_divisa = "Divisas" in metodo
-            porcentaje_desc = 0.10 if es_divisa else 0.0
+            # --- NUEVA LÓGICA DE DESCUENTOS ---
+            metodo = st.radio("Método de Pago", ["Transferencia BS / $ BCV", "Zelle / Divisas (Efectivo)"])
+            
+            porcentaje_desc = 0.0
+            if "Zelle" in metodo:
+                porcentaje_desc = 0.30  # 30% Fijo
+            else:
+                if total_b > 100:
+                    porcentaje_desc = 0.10  # 10% si > $100
+            
             monto_descuento = total_b * porcentaje_desc
             total_n = total_b - monto_descuento
             
             c1, c2 = st.columns(2)
             c1.metric("Subtotal", f"${total_b:.2f}")
-            c2.metric("Descuento", f"-${monto_descuento:.2f}", delta_color="normal")
+            c2.metric("Descuento Aplicado", f"-${monto_descuento:.2f} ({porcentaje_desc*100:.0f}%)", delta_color="normal")
             st.write(f"### Total Final: ${total_n:.2f}")
 
             if st.button("Confirmar Pedido ✅", type="primary", use_container_width=True):
