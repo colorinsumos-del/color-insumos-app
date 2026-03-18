@@ -9,7 +9,6 @@ import json
 import shutil
 import time
 from datetime import datetime
-from fpdf import FPDF  # Nueva librería para generar el PDF de precios
 
 # --- CONFIGURACIÓN ---
 DB_NAME = "catalogo_color_v2.db"
@@ -27,33 +26,6 @@ def get_connection():
 def obtener_catalogo_cache():
     conn = get_connection()
     return pd.read_sql("SELECT * FROM productos", conn)
-
-# --- FUNCIÓN PARA GENERAR PDF DE PRECIOS ---
-def generar_pdf_precios(df):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(190, 10, "COLOR INSUMOS - LISTA DE PRECIOS", ln=True, align="C")
-    pdf.set_font("Arial", "I", 10)
-    pdf.cell(190, 10, f"Generado el: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
-    pdf.ln(10)
-    
-    # Encabezados
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(40, 10, "SKU", 1)
-    pdf.cell(110, 10, "Descripcion", 1)
-    pdf.cell(40, 10, "Precio ($)", 1, ln=True)
-    
-    # Productos
-    pdf.set_font("Arial", "", 10)
-    for index, row in df.iterrows():
-        # Truncar descripción si es muy larga para el PDF
-        desc = str(row['descripcion'])[:55]
-        pdf.cell(40, 10, str(row['sku']), 1)
-        pdf.cell(110, 10, desc, 1)
-        pdf.cell(40, 10, f"{row['precio']:.2f}", 1, ln=True)
-    
-    return pdf.output(dest='S').encode('latin-1')
 
 # --- INICIALIZACIÓN Y MIGRACIÓN ---
 def init_db():
@@ -108,6 +80,7 @@ def card_producto(row, idx):
         st.write(f"### ${row['precio']:.2f}")
         cant = st.number_input("Cant", 1, 100, 1, key=f"q_{row['sku']}_{idx}")
         if st.button("➕ Añadir", key=f"b_{row['sku']}_{idx}", use_container_width=True):
+            # MODIFICACIÓN: El carrito ahora es específico al usuario autenticado
             current_user = st.session_state.user_data['user']
             if current_user not in st.session_state.carritos_usuarios:
                 st.session_state.carritos_usuarios[current_user] = {}
@@ -120,6 +93,7 @@ def card_producto(row, idx):
 init_db()
 if 'auth' not in st.session_state: st.session_state.auth = False
 if 'user_data' not in st.session_state: st.session_state.user_data = None
+# MODIFICACIÓN: Se cambia 'carrito' por un diccionario de carritos
 if 'carritos_usuarios' not in st.session_state: st.session_state.carritos_usuarios = {}
 
 if not st.session_state.auth:
@@ -130,12 +104,14 @@ if not st.session_state.auth:
         if res:
             st.session_state.auth = True
             st.session_state.user_data = {"user": res[0], "nombre": res[2], "rol": res[3]}
+            # Inicializar carrito para este usuario si no existe
             if res[0] not in st.session_state.carritos_usuarios:
                 st.session_state.carritos_usuarios[res[0]] = {}
             st.rerun()
         else: st.error("Credenciales incorrectas")
 else:
     user = st.session_state.user_data
+    # MODIFICACIÓN: Referencia al carrito específico del usuario actual
     carrito_actual = st.session_state.carritos_usuarios.get(user['user'], {})
     num_items = len(carrito_actual)
     
@@ -144,36 +120,9 @@ else:
         if st.button("🔄 Sincronizar"): st.cache_data.clear(); st.rerun()
         if st.button("Cerrar Sesión"): st.session_state.auth = False; st.rerun()
         st.divider()
-        
         cart_lbl = f"🛒 Carrito ({num_items})" if num_items > 0 else "🛒 Comprar"
         nav = [cart_lbl, "📊 Pedidos Totales", "📁 Cargar PDF", "👥 Gestión Clientes"] if user['rol'] == 'admin' else [cart_lbl, "📜 Mis Pedidos"]
         menu = st.radio("Navegación", nav)
-        
-        st.divider()
-        # --- NUEVOS BOTONES LATERALES ---
-        st.subheader("🌐 Enlaces y Contacto")
-        
-        # Botón para descargar PDF de precios
-        df_pdf = obtener_catalogo_cache()
-        if not df_pdf.empty:
-            pdf_data = generar_pdf_precios(df_pdf)
-            st.download_button(
-                label="📄 Descargar Lista de Precios",
-                data=pdf_data,
-                file_name="Lista_Precios_ColorInsumos.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-        
-        # Enlace a la web
-        st.link_button("🌐 Visitar colorinsumos.com", "https://colorinsumos.com", use_container_width=True)
-        
-        # Información de contacto
-        with st.expander("📞 Números de Contacto", expanded=True):
-            st.write("**Ventas al Mayor:**")
-            st.write("0412-6901346")
-            st.write("**Ventas al Detal:**")
-            st.write("0412-7757053")
 
     # --- TIENDA ---
     if "🛒" in menu:
@@ -197,6 +146,7 @@ else:
             else: st.info("Busca algo para empezar.")
 
         with t2:
+            # MODIFICACIÓN: Usar carrito_actual
             if not carrito_actual: st.info("Carrito vacío.")
             else:
                 total_base = 0
@@ -216,6 +166,7 @@ else:
                 st.divider()
                 st.write(f"**Subtotal:** ${total_base:.2f}")
                 
+                # --- LÓGICA DE DESCUENTOS EXCLUYENTES ---
                 pago_divisas = st.toggle("💸 Pagar en Divisas (Aplica 30% de descuento)")
                 
                 total_final = total_base
@@ -234,10 +185,11 @@ else:
                     get_connection().execute("INSERT INTO pedidos (username, fecha, items, total, status) VALUES (?,?,?,?,?)",
                                  (user['user'], datetime.now().strftime("%d/%m/%y %H:%M"), json.dumps(resumen), total_final, "Pendiente"))
                     get_connection().commit()
+                    # Limpiar solo el carrito del usuario actual
                     st.session_state.carritos_usuarios[user['user']] = {}
                     st.success("¡Enviado!"); st.rerun()
 
-    # --- RESTO DE LAS SECCIONES (PEDIDOS TOTALES, GESTIÓN CLIENTES, CARGA PDF) ---
+    # --- PEDIDOS TOTALES ---
     elif menu == "📊 Pedidos Totales":
         st.title("📊 Control de Pedidos")
         peds = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", get_connection())
@@ -259,6 +211,7 @@ else:
                 with pd.ExcelWriter(output, engine='openpyxl') as writer: df_it.to_excel(writer, index=False)
                 c2.download_button("📥 Descargar Excel", output.getvalue(), f"Pedido_{p['id']}.xlsx", key=f"xl_{p['id']}", use_container_width=True)
 
+    # --- GESTIÓN DE CLIENTES ---
     elif menu == "👥 Gestión Clientes":
         st.title("👥 Gestión de Clientes")
         tab1, tab2 = st.tabs(["📝 Editar Clientes", "➕ Nuevo"])
@@ -297,6 +250,7 @@ else:
                         get_connection().commit(); st.success("Creado"); st.rerun()
                     except: st.error("El usuario ya existe")
 
+    # --- CARGA PDF ---
     elif menu == "📁 Cargar PDF":
         st.title("📁 Actualizar Catálogo")
         f = st.file_uploader("Subir PDF", type="pdf")
