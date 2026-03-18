@@ -30,7 +30,6 @@ def get_connection():
 
 def init_db():
     conn = get_connection()
-    # Tablas Base
     conn.execute('''CREATE TABLE IF NOT EXISTS productos 
                  (sku TEXT PRIMARY KEY, descripcion TEXT, precio REAL, categoria TEXT, foto_path TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS usuarios 
@@ -38,25 +37,16 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS pedidos 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)''')
     
-    # --- SISTEMA DE MIGRACIÓN AUTOMÁTICA ---
     cursor = conn.cursor()
     cursor.execute("PRAGMA table_info(pedidos)")
     cols_existentes = [info[1] for info in cursor.fetchall()]
     
-    nuevas_cols = {
-        "cliente_nombre": "TEXT",
-        "metodo_pago": "TEXT",
-        "subtotal": "REAL",
-        "descuento": "REAL"
-    }
-    
+    nuevas_cols = {"cliente_nombre": "TEXT", "metodo_pago": "TEXT", "subtotal": "REAL", "descuento": "REAL"}
     for col, tipo in nuevas_cols.items():
         if col not in cols_existentes:
-            try:
-                conn.execute(f"ALTER TABLE pedidos ADD COLUMN {col} {tipo}")
+            try: conn.execute(f"ALTER TABLE pedidos ADD COLUMN {col} {tipo}")
             except: pass
 
-    # Admin por defecto
     conn.execute("INSERT OR IGNORE INTO usuarios VALUES (?,?,?,?,?,?)", 
                  ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin', 'Maracaibo', '04126901346'))
     conn.commit()
@@ -68,12 +58,10 @@ def generar_pdf_recibo(pedido, info_cliente):
     styles = getSampleStyleSheet()
     elements = []
 
-    # Encabezado
     elements.append(Paragraph("<b>COLOR INSUMOS</b>", styles['Title']))
     elements.append(Paragraph("Comprobante de Pedido / Recibo", styles['Normal']))
     elements.append(Spacer(1, 12))
 
-    # Info Cliente
     detalles = [
         f"<b>Pedido #:</b> {pedido['id']}",
         f"<b>Fecha:</b> {pedido['fecha']}",
@@ -82,12 +70,10 @@ def generar_pdf_recibo(pedido, info_cliente):
         f"<b>Dirección:</b> {info_cliente[1] if info_cliente else 'No registrada'}",
         f"<b>Método de Pago:</b> {pedido.get('metodo_pago', 'N/A')}"
     ]
-    for d in detalles:
-        elements.append(Paragraph(d, styles['Normal']))
+    for d in detalles: elements.append(Paragraph(d, styles['Normal']))
     
     elements.append(Spacer(1, 15))
 
-    # Tabla
     data = [["SKU", "Descripción", "Cant", "Precio", "Total"]]
     items = json.loads(pedido['items'])
     for i in items:
@@ -105,7 +91,6 @@ def generar_pdf_recibo(pedido, info_cliente):
     ]))
     elements.append(t)
     
-    # Manejo de nulos para evitar TypeError
     sub = pedido.get('subtotal') if pedido.get('subtotal') is not None else 0.0
     desc = pedido.get('descuento') if pedido.get('descuento') is not None else 0.0
     tot = pedido.get('total') if pedido.get('total') is not None else 0.0
@@ -133,21 +118,35 @@ def cargar_catalogo():
     return pd.read_sql("SELECT * FROM productos", get_connection())
 
 @st.fragment
-def card_producto(row, idx):
+def card_producto(row, idx, es_admin):
     with st.container(border=True):
+        # Lógica de imagen mejorada
         if row['foto_path'] and os.path.exists(row['foto_path']):
             st.image(row['foto_path'], use_container_width=True)
         else:
             st.image("https://via.placeholder.com/150?text=Color+Insumos", use_container_width=True)
+        
         st.subheader(f"$ {row['precio']:.2f}")
         st.write(f"**{row['sku']}**")
         st.caption(row['descripcion'][:80])
+        
+        # Opción para que el admin corrija la foto si no coincide
+        if es_admin:
+            nueva_foto = st.file_uploader("Cambiar Foto", type=['png','jpg','jpeg'], key=f"file_{row['sku']}")
+            if nueva_foto:
+                path = os.path.join(IMG_DIR, f"{row['sku']}.jpg")
+                with open(path, "wb") as f: f.write(nueva_foto.getbuffer())
+                get_connection().execute("UPDATE productos SET foto_path=? WHERE sku=?", (path, row['sku']))
+                get_connection().commit()
+                st.success("Foto Actualizada")
+                st.rerun()
+
         cant = st.number_input("Cantidad", 1, 500, 1, key=f"q_{row['sku']}_{idx}")
         if st.button("🛒 Añadir", key=f"btn_{row['sku']}_{idx}", use_container_width=True):
             uid = st.session_state.user_data['user']
             if uid not in st.session_state.carritos: st.session_state.carritos[uid] = {}
             st.session_state.carritos[uid][row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
-            st.toast("✅ Añadido")
+            st.toast(f"✅ {row['sku']} añadido")
 
 # --- FLUJO PRINCIPAL ---
 init_db()
@@ -168,12 +167,13 @@ if not st.session_state.auth:
 else:
     user = st.session_state.user_data
     uid = user['user']
+    es_admin = user['rol'] == 'admin'
     if uid not in st.session_state.carritos: st.session_state.carritos[uid] = {}
 
     with st.sidebar:
         st.header(f"👤 {user['nombre']}")
         opc = ["🛍️ Tienda", f"🛒 Carrito ({len(st.session_state.carritos[uid])})", "📜 Mis Pedidos"]
-        if user['rol'] == 'admin': opc += ["📊 Gestión Ventas", "📁 Cargar PDF", "👥 Clientes"]
+        if es_admin: opc += ["📊 Gestión Ventas", "📁 Cargar PDF", "👥 Clientes"]
         menu = st.radio("Menú", opc)
         if st.button("Salir"): 
             st.session_state.auth = False
@@ -186,13 +186,13 @@ else:
         df_full = cargar_catalogo()
         cat_sel = c2.selectbox("📂 Categoría", ["Todas"] + sorted(list(df_full['categoria'].unique())))
         
-        if busq or cat_sel != "Todas":
-            df = df_full.copy()
-            if busq: df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
-            if cat_sel != "Todas": df = df[df['categoria'] == cat_sel]
-            cols = st.columns(4)
-            for i, (_, row) in enumerate(df.iterrows()):
-                with cols[i % 4]: card_producto(row, i)
+        df = df_full.copy()
+        if busq: df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
+        if cat_sel != "Todas": df = df[df['categoria'] == cat_sel]
+        
+        cols = st.columns(4)
+        for i, (_, row) in enumerate(df.iterrows()):
+            with cols[i % 4]: card_producto(row, i, es_admin)
 
     elif "🛒" in menu:
         st.title("🛒 Carrito de Compras")
@@ -213,22 +213,14 @@ else:
                 items_p.append({"sku": sku, "desc": info['desc'], "cant": info['c'], "precio": info['p']})
 
             st.divider()
-            # --- NUEVA LÓGICA DE DESCUENTOS ---
             metodo = st.radio("Método de Pago", ["Transferencia BS / $ BCV", "Zelle / Divisas (Efectivo)"])
-            
-            porcentaje_desc = 0.0
-            if "Zelle" in metodo:
-                porcentaje_desc = 0.30  # 30% Fijo
-            else:
-                if total_b > 100:
-                    porcentaje_desc = 0.10  # 10% si > $100
-            
+            porcentaje_desc = 0.30 if "Zelle" in metodo else (0.10 if total_b > 100 else 0.0)
             monto_descuento = total_b * porcentaje_desc
             total_n = total_b - monto_descuento
             
             c1, c2 = st.columns(2)
             c1.metric("Subtotal", f"${total_b:.2f}")
-            c2.metric("Descuento Aplicado", f"-${monto_descuento:.2f} ({porcentaje_desc*100:.0f}%)", delta_color="normal")
+            c2.metric("Descuento", f"-${monto_descuento:.2f} ({porcentaje_desc*100:.0f}%)")
             st.write(f"### Total Final: ${total_n:.2f}")
 
             if st.button("Confirmar Pedido ✅", type="primary", use_container_width=True):
@@ -241,9 +233,8 @@ else:
 
     elif "Pedidos" in menu or "Ventas" in menu:
         st.title("📜 Historial de Pedidos")
-        query = "SELECT * FROM pedidos ORDER BY id DESC" if user['rol'] == 'admin' else f"SELECT * FROM pedidos WHERE username='{uid}' ORDER BY id DESC"
+        query = "SELECT * FROM pedidos ORDER BY id DESC" if es_admin else f"SELECT * FROM pedidos WHERE username='{uid}' ORDER BY id DESC"
         df_p = pd.read_sql(query, get_connection())
-        
         for _, p in df_p.iterrows():
             info_cli = get_connection().execute("SELECT telefono, direccion FROM usuarios WHERE username=?", (p['username'],)).fetchone()
             with st.expander(f"Pedido #{p['id']} - {p.get('cliente_nombre','Cliente')} | {p['fecha']} | ${p['total']:.2f}"):
@@ -253,12 +244,7 @@ else:
                     st.info(f"**Estado:** {p['status']}\n\n**Pago:** {p.get('metodo_pago')}")
                     pdf = generar_pdf_recibo(p, info_cli)
                     st.download_button("📥 PDF Recibo", pdf, f"Recibo_{p['id']}.pdf", "application/pdf", key=f"p_{p['id']}")
-                    
-                    ex_buf = io.BytesIO()
-                    pd.DataFrame(json.loads(p['items'])).to_excel(ex_buf, index=False)
-                    st.download_button("📊 Excel", ex_buf.getvalue(), f"Pedido_{p['id']}.xlsx", key=f"x_{p['id']}")
-                
-                if user['rol'] == 'admin':
+                if es_admin:
                     nst = st.selectbox("Estatus", ["Pendiente", "Pagado", "Enviado"], key=f"s_{p['id']}")
                     if st.button("Actualizar", key=f"b_{p['id']}"):
                         get_connection().execute("UPDATE pedidos SET status=? WHERE id=?", (nst, p['id']))
@@ -268,7 +254,7 @@ else:
         st.title("📁 Importar Inventario")
         f = st.file_uploader("PDF Pointer", type="pdf")
         if f and st.button("Procesar"):
-            with st.spinner("Cargando..."):
+            with st.spinner("Procesando SKU..."):
                 with open("temp.pdf", "wb") as file: file.write(f.getbuffer())
                 doc = fitz.open("temp.pdf")
                 conn = get_connection()
@@ -278,28 +264,17 @@ else:
                         for tab in tabs:
                             for row in tab.to_pandas().itertuples():
                                 try:
-                                    sku, desc, prec = str(row[1]), str(row[3]), limpiar_precio(row[5])
+                                    # Limpieza de SKU para evitar duplicados o fotos erróneas
+                                    sku = str(row[1]).strip().upper() 
+                                    desc, prec = str(row[3]), limpiar_precio(row[5])
                                     if len(sku) > 2:
-                                        conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio", (sku, desc, prec, "General"))
+                                        conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, descripcion=excluded.descripcion", (sku, desc, prec, "General"))
                                 except: pass
-                conn.commit(); st.success("Actualizado"); st.rerun()
+                conn.commit(); st.success("Inventario Sincronizado"); st.rerun()
 
     elif menu == "👥 Clientes":
         st.title("👥 Gestión de Clientes")
-        
-        # Formulario para registro nuevo
-        with st.expander("➕ Registrar Nuevo Cliente"):
-            with st.form("reg_nuevo"):
-                u_n, p_n, n_n, t_n = st.text_input("Usuario (Email)"), st.text_input("Clave"), st.text_input("Nombre"), st.text_input("Tlf")
-                d_n = st.text_area("Dirección")
-                if st.form_submit_button("Guardar"):
-                    get_connection().execute("INSERT INTO usuarios VALUES (?,?,?,?,?,?)", (u_n, p_n, n_n, 'cliente', d_n, t_n))
-                    get_connection().commit(); st.success("Cliente registrado"); st.rerun()
-        
-        st.divider()
-        st.subheader("Lista de Clientes Registrados")
         df_clientes = pd.read_sql("SELECT * FROM usuarios WHERE rol='cliente'", get_connection())
-        
         for _, cli in df_clientes.iterrows():
             with st.expander(f"👤 {cli['nombre']} ({cli['username']})"):
                 with st.form(key=f"edit_{cli['username']}"):
@@ -308,19 +283,10 @@ else:
                     edit_pass = c2.text_input("Clave", value=cli['password'])
                     edit_tlf = c1.text_input("Teléfono", value=cli['telefono'])
                     edit_dir = st.text_area("Dirección", value=cli['direccion'])
-                    
                     col_b1, col_b2 = st.columns(2)
-                    if col_b1.form_submit_button("💾 Guardar Cambios"):
-                        get_connection().execute(
-                            "UPDATE usuarios SET nombre=?, password=?, telefono=?, direccion=? WHERE username=?",
-                            (edit_nom, edit_pass, edit_tlf, edit_dir, cli['username'])
-                        )
-                        get_connection().commit()
-                        st.success("Actualizado")
-                        st.rerun()
-                    
-                    if col_b2.form_submit_button("🗑️ Eliminar Cliente"):
+                    if col_b1.form_submit_button("💾 Guardar"):
+                        get_connection().execute("UPDATE usuarios SET nombre=?, password=?, telefono=?, direccion=? WHERE username=?", (edit_nom, edit_pass, edit_tlf, edit_dir, cli['username']))
+                        get_connection().commit(); st.success("Actualizado"); st.rerun()
+                    if col_b2.form_submit_button("🗑️ Eliminar"):
                         get_connection().execute("DELETE FROM usuarios WHERE username=?", (cli['username'],))
-                        get_connection().commit()
-                        st.warning("Cliente eliminado")
-                        st.rerun()
+                        get_connection().commit(); st.warning("Eliminado"); st.rerun()
