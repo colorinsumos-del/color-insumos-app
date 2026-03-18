@@ -47,7 +47,7 @@ def init_db():
     
     try:
         conn.execute("INSERT OR IGNORE INTO usuarios VALUES (?,?,?,?,?,?)", 
-                     ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin', 'Oficina Central', '0000-0000'))
+                     ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin', 'Oficina Central', '0000-00-00'))
         conn.commit()
     except: pass
 
@@ -152,26 +152,24 @@ else:
                 st.divider()
                 st.write(f"**Subtotal:** ${total_base:.2f}")
                 
-                # --- APLICACIÓN DE DESCUENTOS ---
-                total_desc = total_base
+                # --- LÓGICA DE DESCUENTOS EXCLUYENTES ---
+                pago_divisas = st.toggle("💸 Pagar en Divisas (Aplica 30% de descuento)")
                 
-                if total_base > 100:
-                    d_10 = total_base * 0.10
-                    total_desc -= d_10
-                    st.success(f"✅ Descuento 10% aplicado por compra > $100: -${d_10:.2f}")
-
-                pago_divisas = st.toggle("💸 ¿Pagar en Divisas? (Aplica 30% de descuento adicional)")
-                
+                total_final = total_base
                 if pago_divisas:
-                    d_30 = total_desc * 0.30
-                    total_desc -= d_30
-                    st.info(f"✨ Descuento 30% por pago en divisas: -${d_30:.2f}")
+                    descuento_val = total_base * 0.30
+                    total_final = total_base - descuento_val
+                    st.info(f"✨ Descuento 30% por pago en divisas aplicado: -${descuento_val:.2f}")
+                elif total_base > 100:
+                    descuento_val = total_base * 0.10
+                    total_final = total_base - descuento_val
+                    st.success(f"✅ Descuento 10% aplicado por compra > $100: -${descuento_val:.2f}")
 
-                st.write(f"## Total Final: ${total_desc:.2f}")
+                st.write(f"## Total Final: ${total_final:.2f}")
                 
                 if st.button("🚀 Confirmar Pedido", type="primary", use_container_width=True):
                     get_connection().execute("INSERT INTO pedidos (username, fecha, items, total, status) VALUES (?,?,?,?,?)",
-                                 (user['user'], datetime.now().strftime("%d/%m/%y %H:%M"), json.dumps(resumen), total_desc, "Pendiente"))
+                                 (user['user'], datetime.now().strftime("%d/%m/%y %H:%M"), json.dumps(resumen), total_final, "Pendiente"))
                     get_connection().commit(); st.session_state.carrito = {}; st.success("¡Enviado!"); st.rerun()
 
     # --- PEDIDOS TOTALES ---
@@ -196,12 +194,11 @@ else:
                 with pd.ExcelWriter(output, engine='openpyxl') as writer: df_it.to_excel(writer, index=False)
                 c2.download_button("📥 Descargar Excel", output.getvalue(), f"Pedido_{p['id']}.xlsx", key=f"xl_{p['id']}", use_container_width=True)
 
-    # --- GESTIÓN DE CLIENTES (CORRECCIÓN DE VISTA) ---
+    # --- GESTIÓN DE CLIENTES ---
     elif menu == "👥 Gestión Clientes":
         st.title("👥 Gestión de Clientes")
         tab1, tab2 = st.tabs(["📝 Editar Clientes", "➕ Nuevo"])
         with tab1:
-            # Corregido: Mostrar todos los usuarios que no son el administrador principal
             df_u = pd.read_sql("SELECT * FROM usuarios WHERE rol != 'admin'", get_connection())
             if df_u.empty:
                 st.info("No hay clientes registrados.")
