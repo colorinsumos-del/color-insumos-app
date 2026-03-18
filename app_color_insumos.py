@@ -76,11 +76,42 @@ def obtener_carrito_db(username):
 # --- ESTILOS CSS ---
 st.markdown("""
     <style>
-        html { overflow-y: scroll !important; }
-        [data-testid="stSidebar"] section { overflow-y: scroll !important; }
-        ::-webkit-scrollbar { width: 10px; height: 10px; }
-        ::-webkit-scrollbar-thumb { background: #888; border-radius: 5px; }
-        .stButton button { border-radius: 8px; }
+        /* 1. Forzar que el cuerpo de la página tenga un margen superior */
+        .main .block-container {
+            padding-top: 2rem !important;
+            padding-bottom: 3rem !important;
+        }
+
+        /* 2. Arreglar el comportamiento del scroll */
+        html {
+            overflow-y: auto !important;
+        }
+
+        /* 3. Asegurar que la barra superior no tape el contenido al hacer scroll */
+        header[data-testid="stHeader"] {
+            z-index: 99; /* Bajamos un poco su prioridad */
+            background-color: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px); /* Efecto elegante de transparencia */
+        }
+
+        /* 4. Estilizar la barra de scroll para que no sea invasiva */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cccccc;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #ff4b4b; /* Color de acento de Streamlit */
+        }
+
+        /* 5. Evitar que los botones se peguen al borde */
+        .stButton button {
+            border-radius: 8px;
+            margin-top: 5px;
+        }
     </style>
 """, unsafe_allow_html=True)
 
