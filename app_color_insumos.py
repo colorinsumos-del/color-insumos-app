@@ -18,17 +18,25 @@ st.set_page_config(page_title="Color Insumos - Sistema Maestro", layout="wide")
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
-    # Tabla de Productos
-    conn.execute('CREATE TABLE IF NOT EXISTS productos (sku TEXT, descripcion TEXT, precio REAL, categoria TEXT, foto_path TEXT)')
-    # Tabla de Usuarios
+    
+    # 1. Tabla de Productos
+    conn.execute('''CREATE TABLE IF NOT EXISTS productos 
+                 (sku TEXT, descripcion TEXT, precio REAL, categoria TEXT, foto_path TEXT)''')
+    
+    # 2. Tabla de Usuarios
     conn.execute('''CREATE TABLE IF NOT EXISTS usuarios 
                  (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT)''')
-    # Tabla de Pedidos
-    conn.execute('CREATE TABLE IF NOT EXISTS pedidos 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)')
     
-    # --- CAMBIO AQUÍ: INSERT OR IGNORE ---
-    # Esto evita el error de "Usuario duplicado" al reiniciar la app
+    # 3. Tabla de Pedidos (Corregida con comillas triples para evitar SyntaxError)
+    conn.execute('''CREATE TABLE IF NOT EXISTS pedidos 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                  username TEXT, 
+                  fecha TEXT, 
+                  items TEXT, 
+                  total REAL, 
+                  status TEXT)''')
+    
+    # 4. Insertar Usuario Maestro (Usando INSERT OR IGNORE para evitar OperationalError)
     conn.execute("""
         INSERT OR IGNORE INTO usuarios (username, password, nombre, rol) 
         VALUES (?, ?, ?, ?)
