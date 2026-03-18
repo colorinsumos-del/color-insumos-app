@@ -5,11 +5,12 @@ import pandas as pd
 import sqlite3
 import os
 import io
+import json
 import shutil
 from datetime import datetime
 
 # --- CONFIGURACIÓN E INICIALIZACIÓN ---
-DB_NAME = "catalogo_color.db"
+DB_NAME = "catalogo_color_v2.db"
 IMG_DIR = "static/fotos"
 os.makedirs(IMG_DIR, exist_ok=True)
 
@@ -17,18 +18,26 @@ st.set_page_config(page_title="Color Insumos - Sistema de Pedidos", layout="wide
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
+    # Tabla de Productos
     conn.execute('''CREATE TABLE IF NOT EXISTS productos 
                  (sku TEXT, descripcion TEXT, precio REAL, categoria TEXT, foto_path TEXT)''')
+    # Tabla de Usuarios
     conn.execute('''CREATE TABLE IF NOT EXISTS usuarios 
                  (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT)''')
+    # Tabla de Pedidos
     conn.execute('''CREATE TABLE IF NOT EXISTS pedidos 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)''')
+    
+    # Insertar Usuario Maestro
     try:
-        conn.execute("INSERT OR REPLACE INTO usuarios VALUES (?, ?, ?, ?)",
-                     ('colorinsumos@gmail.com', '20880157', 'Administrador Maestro', 'admin'))
+        conn.execute("""
+            INSERT OR REPLACE INTO usuarios (username, password, nombre, rol) 
+            VALUES (?, ?, ?, ?)
+        """, ('colorinsumos@gmail.com', '20880157', 'Administrador Maestro', 'admin'))
         conn.commit()
-    except: pass
+    except:
+        pass
     conn.close()
 
 # --- ESTADO DE SESIÓN ---
@@ -41,10 +50,11 @@ init_db()
 # --- FUNCIONES DE APOYO ---
 def obtener_categoria(sku, descripcion):
     d = descripcion.upper()
-    if any(x in d for x in ["ABACO", "DIDACTICO", "JUEGO", "ROMPECABEZA", "PZZ", "MEMORIA"]): return "🧩 JUEGOS Y DIDÁCTICOS"
-    if any(x in d for x in ["MARCADOR", "LAPIZ", "BOLIGRAFO", "COLORES", "BORRADOR"]): return "✏️ ESCRITURA"
-    if any(x in d for x in ["PAPEL", "CARTULINA", "BLOCK", "LIBRETA", "CUADERNO"]): return "📄 PAPELERÍA"
-    if any(x in d for x in ["TIJERA", "REGLA", "PEGA", "GRAPADORA", "CINTA"]): return "✂️ OFICINA / ESCOLAR"
+    if any(x in d for x in ["ABACO", "DIDACTICO", "JUEGO", "ROMPECABEZA", "PZZ", "MEMORIA", "LOTERIA"]): return "🧩 JUEGOS Y DIDÁCTICOS"
+    if any(x in d for x in ["MARCADOR", "LAPIZ", "BOLIGRAFO", "COLORES", "BORRADOR", "SACAPUNTA", "TIZA", "RESALTADOR"]): return "✏️ ESCRITURA"
+    if any(x in d for x in ["PAPEL", "CARTULINA", "BLOCK", "LIBRETA", "CUADERNO", "RESMA", "SOBRE", "FORRO"]): return "📄 PAPELERÍA"
+    if any(x in d for x in ["TIJERA", "REGLA", "PEGA", "GRAPADORA", "CINTA", "CORRECTOR", "CARPETA", "PERFORADORA"]): return "✂️ OFICINA / ESCOLAR"
+    if any(x in d for x in ["TEMPERA", "PINCEL", "PLASTILINA", "FOAMI", "SILICON", "ESTUCHE", "ACUARELA"]): return "🎨 ARTE Y MANUALIDADES"
     return "📦 VARIOS"
 
 def procesar_pdf(pdf_file):
@@ -60,8 +70,9 @@ def procesar_pdf(pdf_file):
             imgs_pag = [{'bbox': img['bbox'], 'xref': x[0]} for img, x in zip(doc[i].get_image_info(), doc[i].get_images(full=True))]
             for row in tables[0].rows:
                 try:
-                    sku = page.within_bbox(row.cells[0]).extract_text().strip().split('\n')[0]
-                    if not sku or "REFERENCIA" in sku.upper(): continue
+                    sku_t = page.within_bbox(row.cells[0]).extract_text()
+                    if not sku_t or "REFERENCIA" in sku_t.upper(): continue
+                    sku = sku_t.strip().split('\n')[0]
                     desc = page.within_bbox(row.cells[2]).extract_text().replace('\n', ' ').strip()
                     precio = float(page.within_bbox(row.cells[3]).extract_text().replace(',', '.').strip())
                     y_mid = (row.bbox[1] + row.bbox[3]) / 2
@@ -77,12 +88,12 @@ def procesar_pdf(pdf_file):
     conn = sqlite3.connect(DB_NAME)
     conn.execute("DELETE FROM productos"); df.to_sql('productos', conn, if_exists='append', index=False); conn.close()
 
-# --- INTERFAZ DE ACCESO ---
+# --- INTERFAZ DE USUARIO ---
 if not st.session_state.auth:
     st.title("🚀 Color Insumos - Acceso")
-    u = st.text_input("Usuario")
+    u = st.text_input("Usuario / Email")
     p = st.text_input("Contraseña", type="password")
-    if st.button("Entrar"):
+    if st.button("Iniciar Sesión", type="primary"):
         conn = sqlite3.connect(DB_NAME)
         res = conn.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u, p)).fetchone()
         conn.close()
@@ -90,7 +101,7 @@ if not st.session_state.auth:
             st.session_state.auth = True
             st.session_state.user_data = {"user": res[0], "nombre": res[2], "rol": res[3]}
             st.rerun()
-        else: st.error("Credenciales incorrectas")
+        else: st.error("Usuario o clave incorrecta")
 else:
     user = st.session_state.user_data
     with st.sidebar:
@@ -98,16 +109,17 @@ else:
         if st.button("Cerrar Sesión"):
             st.session_state.auth = False; st.rerun()
         st.divider()
-        menu = st.radio("Navegación", ["🛒 Tienda / Catálogo", "📁 Cargar PDF", "👥 Clientes", "📊 Pedidos"]) if user['rol'] == 'admin' else st.radio("Navegación", ["🛒 Comprar", "📜 Mis Pedidos"])
+        nav_options = ["🛒 Tienda", "📁 Cargar PDF", "👥 Clientes", "📊 Pedidos Recibidos"] if user['rol'] == 'admin' else ["🛒 Comprar", "📜 Mis Pedidos"]
+        menu = st.radio("Navegación", nav_options)
 
-    # --- VISTA TIENDA / COMPRA ---
-    if menu in ["🛒 Tienda / Catálogo", "🛒 Comprar"]:
-        tab1, tab2 = st.tabs(["🛍️ Catálogo de Productos", "🛒 Mi Carrito"])
+    # --- LÓGICA DE TIENDA Y CARRITO ---
+    if menu in ["🛒 Tienda", "🛒 Comprar"]:
+        tab1, tab2 = st.tabs(["🛍️ Catálogo", "🛒 Mi Carrito Detallado"])
 
         with tab1:
-            st.subheader("Explorar Productos")
+            st.subheader("Seleccione sus productos")
             c1, c2 = st.columns([2, 1])
-            busqueda = c1.text_input("🔍 Buscar por Nombre o SKU...")
+            busqueda = c1.text_input("🔍 Buscar por SKU o Nombre...")
             
             conn = sqlite3.connect(DB_NAME)
             df_cat = pd.read_sql("SELECT * FROM productos", conn)
@@ -137,14 +149,13 @@ else:
                                         st.toast(f"Agregado: {row['sku']}")
 
         with tab2:
-            st.subheader("Resumen de tu Pedido")
+            st.subheader("Gestión de Pedido")
             if not st.session_state.carrito:
-                st.info("Tu carrito está vacío. Agrega productos desde el catálogo.")
+                st.info("El carrito está vacío.")
             else:
                 total_global = 0
-                resumen_lista = []
+                resumen_final = []
                 
-                # Tabla de edición
                 for sku, info in list(st.session_state.carrito.items()):
                     with st.container(border=True):
                         col1, col2, col3, col4, col5 = st.columns([1, 2, 1, 1, 1])
@@ -152,81 +163,66 @@ else:
                         col2.write(info['desc'])
                         col3.write(f"${info['p']:.2f}")
                         
-                        # Permitir modificar cantidad desde el carrito
-                        nueva_cant = col4.number_input("Cant", min_value=1, value=info['c'], key=f"edit_{sku}")
-                        st.session_state.carrito[sku]['c'] = nueva_cant
+                        # Edición de cantidad
+                        n_cant = col4.number_input("Cant", min_value=1, value=info['c'], key=f"ed_{sku}")
+                        st.session_state.carrito[sku]['c'] = n_cant
                         
-                        subtotal = info['p'] * nueva_cant
-                        total_global += subtotal
-                        col5.write(f"**Sub: ${subtotal:.2f}**")
+                        subt = info['p'] * n_cant
+                        total_global += subt
+                        col5.write(f"**Sub: ${subt:.2f}**")
                         
-                        if st.button("Eliminar 🗑️", key=f"del_{sku}"):
+                        if st.button("Eliminar ❌", key=f"rm_{sku}"):
                             del st.session_state.carrito[sku]
                             st.rerun()
                         
-                        resumen_lista.append({"SKU": sku, "Descripción": info['desc'], "Precio": info['p'], "Cantidad": nueva_cant, "Subtotal": subtotal})
+                        resumen_final.append({"SKU": sku, "Descripción": info['desc'], "Precio": info['p'], "Cantidad": n_cant, "Subtotal": subt})
 
                 st.divider()
-                st.write(f"## Total a Pagar: ${total_global:.2f}")
+                st.write(f"## Total Final: ${total_global:.2f}")
 
-                col_ex, col_proc = st.columns(2)
+                cx, cp = st.columns(2)
                 
-                # --- EXPORTAR A EXCEL ---
-                df_excel = pd.DataFrame(resumen_lista)
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_excel.to_excel(writer, index=False, sheet_name='Pedido_ColorInsumos')
+                # Excel
+                df_ex = pd.DataFrame(resumen_final)
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine='openpyxl') as w:
+                    df_ex.to_excel(w, index=False)
                 
-                col_ex.download_button(
-                    label="📥 Descargar Pedido en Excel",
-                    data=output.getvalue(),
-                    file_name=f"Pedido_{user['user']}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
+                cx.download_button("📥 Descargar Excel", buf.getvalue(), f"Pedido_{datetime.now().strftime('%d%m%Y')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-                # --- PROCESAR PEDIDO WEB ---
-                if col_proc.button("🚀 Procesar Pedido Web", variant="primary", use_container_width=True):
+                if cp.button("🚀 Procesar Pedido Web", type="primary", use_container_width=True):
                     conn = sqlite3.connect(DB_NAME)
-                    items_json = json.dumps(resumen_lista)
                     conn.execute("INSERT INTO pedidos (username, fecha, items, total, status) VALUES (?,?,?,?,?)",
-                                 (user['user'], datetime.now().strftime("%Y-%m-%d %H:%M"), items_json, total_global, "Pendiente"))
-                    conn.commit()
-                    conn.close()
+                                 (user['user'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(resumen_final), total_global, "Pendiente"))
+                    conn.commit(); conn.close()
                     st.session_state.carrito = {}
-                    st.success("¡Pedido procesado correctamente! El administrador lo revisará pronto.")
-                    st.balloons()
+                    st.success("Pedido procesado con éxito."); st.balloons(); st.rerun()
 
-    # --- VISTA PEDIDOS (ADMIN) ---
-    elif menu == "📊 Pedidos":
-        st.title("Gestión de Pedidos Web")
+    # --- PANEL ADMIN (PEDIDOS) ---
+    elif menu == "📊 Pedidos Recibidos":
+        st.title("Pedidos de Clientes")
         conn = sqlite3.connect(DB_NAME)
-        df_pedidos = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", conn)
+        pedidos = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", conn)
         conn.close()
-        
-        if df_pedidos.empty:
-            st.write("No hay pedidos registrados aún.")
-        else:
-            for _, p in df_pedidos.iterrows():
-                with st.expander(f"Pedido #{p['id']} - {p['username']} ({p['fecha']}) - Total: ${p['total']:.2f}"):
-                    items = json.loads(p['items'])
-                    st.table(pd.DataFrame(items))
-                    st.write(f"Estado actual: **{p['status']}**")
+        for _, p in pedidos.iterrows():
+            with st.expander(f"Pedido #{p['id']} - {p['username']} - ${p['total']:.2f}"):
+                st.table(pd.DataFrame(json.loads(p['items'])))
+                st.write(f"Fecha: {p['fecha']} | Estado: {p['status']}")
 
-    # --- CARGAR PDF / CLIENTES (ADMIN) ---
+    # --- PANEL ADMIN (CARGA Y CLIENTES) ---
     elif menu == "📁 Cargar PDF":
-        archivo = st.file_uploader("Subir Catálogo PDF", type="pdf")
-        if archivo and st.button("Procesar"):
-            procesar_pdf(archivo); st.success("Catálogo actualizado."); st.rerun()
+        f = st.file_uploader("Subir PDF", type="pdf")
+        if f and st.button("Actualizar Catálogo"):
+            procesar_pdf(f); st.success("Catálogo actualizado."); st.rerun()
 
     elif menu == "👥 Clientes":
-        st.subheader("Registro de Clientes")
-        with st.form("cli"):
-            nu, np, nn = st.text_input("Usuario"), st.text_input("Clave"), st.text_input("Nombre")
-            if st.form_submit_button("Registrar"):
+        st.subheader("Nuevo Cliente")
+        with st.form("c"):
+            u, p, n = st.text_input("Usuario"), st.text_input("Clave"), st.text_input("Nombre")
+            if st.form_submit_button("Crear"):
                 conn = sqlite3.connect(DB_NAME)
                 try:
-                    conn.execute("INSERT INTO usuarios VALUES (?,?,?,?)", (nu, np, nn, 'cliente'))
-                    conn.commit(); st.success("Cliente registrado con éxito.")
-                except: st.error("El usuario ya existe.")
+                    conn.execute("INSERT INTO usuarios VALUES (?,?,?,?)", (u, p, n, 'cliente'))
+                    conn.commit(); st.success("Cliente Creado")
+                except: st.error("Error: El usuario ya existe.")
                 conn.close()
