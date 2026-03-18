@@ -165,16 +165,14 @@ else:
                 lista_cats = ["Todas"] + sorted(df_cat['categoria'].unique().tolist())
                 cat_seleccionada = st.selectbox("Filtrar por Categoría:", lista_cats)
 
-            # Filtrado Lógico
             df_ver = df_cat.copy()
             if busqueda:
                 df_ver = df_ver[(df_ver['descripcion'].str.contains(busqueda, case=False)) | (df_ver['sku'].str.contains(busqueda, case=False))]
             if cat_seleccionada != "Todas":
                 df_ver = df_ver[df_ver['categoria'] == cat_seleccionada]
             
-            # --- MOSTRAR PRODUCTOS ---
             if df_ver.empty:
-                st.warning("No se encontraron productos con esos filtros.")
+                st.warning("No se encontraron productos.")
             else:
                 for cat in sorted(df_ver['categoria'].unique()):
                     st.subheader(cat)
@@ -190,24 +188,41 @@ else:
                                 st.write(f"💰 ${row['precio']:.2f}")
                                 
                                 if user['rol'] == 'cliente':
-                                    val_previo = st.session_state.carrito.get(row['sku'], {}).get('c', 0)
-                                    cant = st.number_input("Cantidad:", min_value=0, value=val_previo, key=f"input_{row['sku']}")
+                                    # Input de cantidad
+                                    cant = st.number_input("Cantidad:", min_value=1, value=1, key=f"qty_{row['sku']}")
                                     
-                                    if cant > 0:
-                                        st.session_state.carrito[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
-                                        st.success("Añadido ✅")
-                                    elif row['sku'] in st.session_state.carrito:
-                                        del st.session_state.carrito[row['sku']]
+                                    # BOTÓN DE AÑADIR
+                                    if st.button(f"🛒 Añadir", key=f"btn_{row['sku']}"):
+                                        st.session_state.carrito[row['sku']] = {
+                                            "desc": row['descripcion'], 
+                                            "p": row['precio'], 
+                                            "c": cant
+                                        }
+                                        st.toast(f"Añadido: {row['sku']}")
+
+                                    # Mostrar si ya está en el carrito
+                                    if row['sku'] in st.session_state.carrito:
+                                        st.success(f"En carrito: {st.session_state.carrito[row['sku']]['c']}")
 
         # BARRA LATERAL DEL CARRITO
         if user['rol'] == 'cliente' and st.session_state.carrito:
             st.sidebar.divider()
             st.sidebar.subheader("🛒 Resumen de Pedido")
             total = 0
-            for k, v in st.session_state.carrito.items():
-                st.sidebar.write(f"**{v['c']}** x {k}")
+            for k, v in list(st.session_state.carrito.items()):
+                col_c1, col_c2 = st.sidebar.columns([3, 1])
+                col_c1.write(f"**{v['c']}** x {k}")
+                if col_c2.button("❌", key=f"del_{k}"):
+                    del st.session_state.carrito[k]
+                    st.rerun()
                 total += v['p'] * v['c']
+            
             st.sidebar.write(f"### Total: ${total:.2f}")
+            
+            if st.sidebar.button("🗑️ Vaciar Carrito"):
+                st.session_state.carrito = {}
+                st.rerun()
+                
             if st.sidebar.button("✅ Confirmar Pedido"):
                 st.sidebar.success("¡Pedido enviado con éxito!")
 
