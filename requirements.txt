@@ -4,3 +4,4 @@ pymupdf
 pandas
 openpyxl
 fpdf2
+reportlab
