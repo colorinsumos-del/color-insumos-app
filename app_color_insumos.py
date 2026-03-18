@@ -80,7 +80,12 @@ def card_producto(row, idx):
         st.write(f"### ${row['precio']:.2f}")
         cant = st.number_input("Cant", 1, 100, 1, key=f"q_{row['sku']}_{idx}")
         if st.button("➕ Añadir", key=f"b_{row['sku']}_{idx}", use_container_width=True):
-            st.session_state.carrito[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
+            # MODIFICACIÓN: El carrito ahora es específico al usuario autenticado
+            current_user = st.session_state.user_data['user']
+            if current_user not in st.session_state.carritos_usuarios:
+                st.session_state.carritos_usuarios[current_user] = {}
+            
+            st.session_state.carritos_usuarios[current_user][row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
             st.toast(f"✅ {row['sku']} añadido")
             time.sleep(0.5); st.rerun()
 
@@ -88,7 +93,8 @@ def card_producto(row, idx):
 init_db()
 if 'auth' not in st.session_state: st.session_state.auth = False
 if 'user_data' not in st.session_state: st.session_state.user_data = None
-if 'carrito' not in st.session_state: st.session_state.carrito = {}
+# MODIFICACIÓN: Se cambia 'carrito' por un diccionario de carritos
+if 'carritos_usuarios' not in st.session_state: st.session_state.carritos_usuarios = {}
 
 if not st.session_state.auth:
     st.title("🚀 Acceso Color Insumos")
@@ -98,11 +104,16 @@ if not st.session_state.auth:
         if res:
             st.session_state.auth = True
             st.session_state.user_data = {"user": res[0], "nombre": res[2], "rol": res[3]}
+            # Inicializar carrito para este usuario si no existe
+            if res[0] not in st.session_state.carritos_usuarios:
+                st.session_state.carritos_usuarios[res[0]] = {}
             st.rerun()
         else: st.error("Credenciales incorrectas")
 else:
     user = st.session_state.user_data
-    num_items = len(st.session_state.carrito)
+    # MODIFICACIÓN: Referencia al carrito específico del usuario actual
+    carrito_actual = st.session_state.carritos_usuarios.get(user['user'], {})
+    num_items = len(carrito_actual)
     
     with st.sidebar:
         st.header(f"👤 {user['nombre']}")
@@ -135,18 +146,21 @@ else:
             else: st.info("Busca algo para empezar.")
 
         with t2:
-            if not st.session_state.carrito: st.info("Carrito vacío.")
+            # MODIFICACIÓN: Usar carrito_actual
+            if not carrito_actual: st.info("Carrito vacío.")
             else:
                 total_base = 0
                 resumen = []
-                for sku, info in list(st.session_state.carrito.items()):
+                for sku, info in list(carrito_actual.items()):
                     sub = info['p'] * info['c']
                     total_base += sub
                     with st.container(border=True):
                         col1, col2, col3 = st.columns([3, 1, 1])
                         col1.write(f"**{sku}** - {info['desc']} ({info['c']} x ${info['p']})")
                         col2.write(f"**${sub:.2f}**")
-                        if col3.button("🗑️", key=f"rm_{sku}"): del st.session_state.carrito[sku]; st.rerun()
+                        if col3.button("🗑️", key=f"rm_{sku}"): 
+                            del st.session_state.carritos_usuarios[user['user']][sku]
+                            st.rerun()
                     resumen.append({"SKU": sku, "Desc": info['desc'], "Cant": info['c'], "Subtotal": sub})
                 
                 st.divider()
@@ -170,7 +184,10 @@ else:
                 if st.button("🚀 Confirmar Pedido", type="primary", use_container_width=True):
                     get_connection().execute("INSERT INTO pedidos (username, fecha, items, total, status) VALUES (?,?,?,?,?)",
                                  (user['user'], datetime.now().strftime("%d/%m/%y %H:%M"), json.dumps(resumen), total_final, "Pendiente"))
-                    get_connection().commit(); st.session_state.carrito = {}; st.success("¡Enviado!"); st.rerun()
+                    get_connection().commit()
+                    # Limpiar solo el carrito del usuario actual
+                    st.session_state.carritos_usuarios[user['user']] = {}
+                    st.success("¡Enviado!"); st.rerun()
 
     # --- PEDIDOS TOTALES ---
     elif menu == "📊 Pedidos Totales":
