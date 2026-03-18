@@ -19,30 +19,35 @@ st.set_page_config(page_title="Color Insumos - Sistema Maestro", layout="wide")
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     
-    # 1. Tabla de Productos
+    # 1. Crear tablas si no existen
     conn.execute('''CREATE TABLE IF NOT EXISTS productos 
                  (sku TEXT, descripcion TEXT, precio REAL, categoria TEXT, foto_path TEXT)''')
     
-    # 2. Tabla de Usuarios
     conn.execute('''CREATE TABLE IF NOT EXISTS usuarios 
                  (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT)''')
     
-    # 3. Tabla de Pedidos (Corregida con comillas triples para evitar SyntaxError)
     conn.execute('''CREATE TABLE IF NOT EXISTS pedidos 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  username TEXT, 
-                  fecha TEXT, 
-                  items TEXT, 
-                  total REAL, 
-                  status TEXT)''')
+                  username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)''')
     
-    # 4. Insertar Usuario Maestro (Usando INSERT OR IGNORE para evitar OperationalError)
-    conn.execute("""
-        INSERT OR IGNORE INTO usuarios (username, password, nombre, rol) 
-        VALUES (?, ?, ?, ?)
-    """, ('colorinsumos@gmail.com', '20880157', 'Administrador Maestro', 'admin'))
+    # 2. INSERTAR MAESTRO CON MANEJO DE ERRORES EXPLÍCITO
+    try:
+        # Intentamos insertar al administrador maestro
+        conn.execute("""
+            INSERT OR REPLACE INTO usuarios (username, password, nombre, rol) 
+            VALUES (?, ?, ?, ?)
+        """, ('colorinsumos@gmail.com', '20880157', 'Administrador Maestro', 'admin'))
+        conn.commit()
+    except sqlite3.OperationalError:
+        # Si da error de "columna no encontrada", es porque la DB es vieja.
+        # En ese caso, borramos la tabla y la creamos de nuevo (solo usuarios)
+        conn.execute("DROP TABLE IF EXISTS usuarios")
+        conn.execute('''CREATE TABLE usuarios 
+                     (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT)''')
+        conn.execute("INSERT INTO usuarios VALUES (?, ?, ?, ?)",
+                     ('colorinsumos@gmail.com', '20880157', 'Administrador Maestro', 'admin'))
+        conn.commit()
     
-    conn.commit()
     conn.close()
 
 # --- LOGICA DE SESIÓN ---
