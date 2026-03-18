@@ -15,7 +15,7 @@ DB_NAME = "catalogo_color_v2.db"
 IMG_DIR = "static/fotos"
 os.makedirs(IMG_DIR, exist_ok=True)
 
-st.set_page_config(page_title="Color Insumos - Sistema Optimizado", layout="wide")
+st.set_page_config(page_title="Color Insumos - Sistema Maestro", layout="wide")
 
 # --- MOTOR DE VELOCIDAD (CACHÉ) ---
 @st.cache_resource
@@ -27,26 +27,22 @@ def obtener_catalogo_cache():
     conn = get_connection()
     return pd.read_sql("SELECT * FROM productos", conn)
 
-# --- ESTILOS CSS (BARRA DE SCROLL SIEMPRE VISIBLE) ---
+# --- ESTILOS CSS (SCROLLBARS VISIBLES Y FIJOS) ---
 st.markdown("""
     <style>
-        /* Forzar scrollbar visible en el sidebar */
-        [data-testid="stSidebar"] section {
-            overflow-y: scroll !important;
-        }
-        /* Estilo de la barra de scroll para Chrome/Safari */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #888;
-            border-radius: 10px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #555;
-        }
-        [data-testid="stSidebarNav"] { max-height: 100vh; }
+        /* Scrollbar general siempre visible */
+        html { overflow-y: scroll !important; }
+        
+        /* Scrollbar para el Sidebar */
+        [data-testid="stSidebar"] section { overflow-y: scroll !important; }
+        
+        /* Personalización de las barras de scroll */
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #888; border-radius: 5px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        /* Estilo para tarjetas de productos */
         .stButton button { border-radius: 8px; }
     </style>
 """, unsafe_allow_html=True)
@@ -111,40 +107,29 @@ else:
 
     if "🛒" in menu:
         t_cat, t_car = st.tabs(["🛍️ Buscar Productos", "🧾 Revisar Pedido"])
-        
         with t_cat:
             df = obtener_catalogo_cache()
-            st.info("💡 Utiliza los filtros de arriba para ver los productos.")
-            
             c1, c2 = st.columns([2, 1])
             busq = c1.text_input("🔍 Buscar por Nombre o SKU...")
             cats = ["Seleccionar Categoría"] + sorted(df['categoria'].unique().tolist())
             cat_sel = c2.selectbox("📁 Filtrar por Categoría", cats)
             
-            # LÓGICA DE MOSTRAR SOLO SI HAY BÚSQUEDA
             if busq or cat_sel != "Seleccionar Categoría":
                 df_v = df.copy()
-                if busq:
-                    df_v = df_v[df_v['descripcion'].str.contains(busq, case=False) | df_v['sku'].str.contains(busq, case=False)]
-                if cat_sel != "Seleccionar Categoría":
-                    df_v = df_v[df_v['categoria'] == cat_sel]
+                if busq: df_v = df_v[df_v['descripcion'].str.contains(busq, case=False) | df_v['sku'].str.contains(busq, case=False)]
+                if cat_sel != "Seleccionar Categoría": df_v = df_v[df_v['categoria'] == cat_sel]
                 
-                if df_v.empty:
-                    st.warning("No se encontraron resultados.")
-                else:
-                    for cat in sorted(df_v['categoria'].unique()):
-                        with st.expander(f"{cat}", expanded=True):
-                            items = df_v[df_v['categoria'] == cat]
-                            cols = st.columns(4)
-                            for idx, row in items.reset_index().iterrows():
-                                with cols[idx % 4]: card_producto(row, idx)
+                for cat in sorted(df_v['categoria'].unique()):
+                    with st.expander(f"{cat}", expanded=True):
+                        items = df_v[df_v['categoria'] == cat]
+                        cols = st.columns(4)
+                        for idx, row in items.reset_index().iterrows():
+                            with cols[idx % 4]: card_producto(row, idx)
             else:
-                st.write("---")
-                st.caption("Esperando búsqueda... escribe algo o selecciona una categoría para empezar.")
+                st.info("Escribe el nombre de un producto o selecciona una categoría para empezar.")
 
         with t_car:
-            if not st.session_state.carrito: 
-                st.info("Carrito vacío.")
+            if not st.session_state.carrito: st.info("Carrito vacío.")
             else:
                 total = 0
                 resumen = []
@@ -157,39 +142,52 @@ else:
                         col2.write(f"**${sub:.2f}**")
                         if col3.button("🗑️", key=f"del_{sku}"): del st.session_state.carrito[sku]; st.rerun()
                     resumen.append({"SKU": sku, "Desc": info['desc'], "Cant": info['c'], "Subtotal": sub})
-                
                 st.write(f"## Total: ${total:.2f}")
-                if st.button("🚀 Confirmar Pedido", type="primary", use_container_width=True):
-                    conn = get_connection()
-                    conn.execute("INSERT INTO pedidos (username, fecha, items, total, status) VALUES (?,?,?,?,?)",
+                if st.button("🚀 Confirmar Pedido", type="primary"):
+                    get_connection().execute("INSERT INTO pedidos (username, fecha, items, total, status) VALUES (?,?,?,?,?)",
                                  (user['user'], datetime.now().strftime("%d/%m/%y %H:%M"), json.dumps(resumen), total, "Pendiente"))
-                    conn.commit()
+                    get_connection().commit()
                     st.session_state.carrito = {}; st.success("¡Pedido enviado!"); st.rerun()
 
-    # --- HISTORIAL (MANTENIENDO LO ANTERIOR) ---
+    # --- EDITOR DE CLIENTES (NUEVA FUNCIÓN) ---
+    elif menu == "👥 Clientes" and user['rol'] == 'admin':
+        st.title("👥 Gestión de Clientes")
+        
+        # Formulario para nuevo cliente
+        with st.expander("➕ Registrar Nuevo Cliente"):
+            with st.form("add_user"):
+                new_u = st.text_input("Usuario (Email)")
+                new_p = st.text_input("Contraseña")
+                new_n = st.text_input("Nombre / Empresa")
+                if st.form_submit_button("Guardar Cliente"):
+                    try:
+                        conn = get_connection()
+                        conn.execute("INSERT INTO usuarios VALUES (?,?,?,?)", (new_u, new_p, new_n, 'cliente'))
+                        conn.commit(); st.success("Cliente creado"); st.rerun()
+                    except: st.error("El usuario ya existe.")
+
+        # Tabla de edición/eliminación
+        st.subheader("Clientes Registrados")
+        conn = get_connection()
+        df_u = pd.read_sql("SELECT username, nombre, password FROM usuarios WHERE rol='cliente'", conn)
+        
+        for idx, row in df_u.iterrows():
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+                c1.write(f"**ID:** {row['username']}")
+                c2.write(f"**Nombre:** {row['nombre']}")
+                c3.write(f"**Clave:** {row['password']}")
+                if c4.button("🗑️", key=f"del_u_{idx}"):
+                    conn.execute("DELETE FROM usuarios WHERE username=?", (row['username'],))
+                    conn.commit(); st.warning(f"Usuario {row['username']} eliminado"); st.rerun()
+
+    # --- HISTORIAL Y PDF ---
     elif "Pedidos" in menu:
-        st.title("Historial de Pedidos")
+        st.title("📊 Historial de Pedidos")
         query = "SELECT * FROM pedidos ORDER BY id DESC" if user['rol'] == 'admin' else "SELECT * FROM pedidos WHERE username=? ORDER BY id DESC"
-        params = () if user['rol'] == 'admin' else (user['user'],)
-        peds = pd.read_sql(query, get_connection(), params=params)
+        peds = pd.read_sql(query, get_connection(), params=() if user['rol'] == 'admin' else (user['user'],))
         for _, p in peds.iterrows():
             with st.expander(f"Pedido #{p['id']} - {p['username']} - {p['fecha']}"):
                 df_p = pd.DataFrame(json.loads(p['items']))
                 st.table(df_p)
                 st.write(f"**Total: ${p['total']:.2f}**")
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer: df_p.to_excel(writer, index=False)
-                st.download_button(f"📥 Descargar Excel #{p['id']}", output.getvalue(), f"Pedido_{p['id']}.xlsx", key=f"dl_{p['id']}")
-
-    elif menu == "📁 Cargar PDF":
-        f = st.file_uploader("Subir Catálogo PDF", type="pdf")
-        if f and st.button("Iniciar"): 
-            # Aquí iría tu función procesar_pdf(f) de antes...
-            st.success("Catálogo actualizado. Haz clic en Sincronizar.")
-
-    elif menu == "👥 Clientes":
-        with st.form("new_u"):
-            nu, np, nn = st.text_input("Usuario"), st.text_input("Clave"), st.text_input("Nombre")
-            if st.form_submit_button("Crear"):
-                get_connection().execute("INSERT INTO usuarios VALUES (?,?,?,?)", (nu, np, nn, 'cliente'))
-                get_connection().commit(); st.success("Cliente creado")
