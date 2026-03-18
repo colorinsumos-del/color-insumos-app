@@ -6,7 +6,53 @@ import io
 import json
 import time
 from datetime import datetime
+from fpdf import FPDF
 
+def generar_pdf_pedido(id_pedido, fecha, cliente_info, items, total):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    
+    # Encabezado
+    pdf.cell(190, 10, "COLOR INSUMOS - REPORTE DE PEDIDO", ln=True, align="C")
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(190, 10, f"Pedido #: {id_pedido} | Fecha: {fecha}", ln=True, align="C")
+    pdf.ln(10)
+    
+    # Información del Cliente
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(190, 10, "Datos del Cliente:", ln=True)
+    pdf.set_font("Arial", "", 10)
+    pdf.multi_cell(190, 7, f"Nombre: {cliente_info[0]}\nTeléfono: {cliente_info[1]}\nDirección: {cliente_info[2]}")
+    pdf.ln(5)
+    
+    # Tabla de Productos
+    pdf.set_font("Arial", "B", 10)
+    pdf.cell(30, 10, "SKU", 1)
+    pdf.cell(90, 10, "Descripción", 1)
+    pdf.cell(20, 10, "Cant.", 1)
+    pdf.cell(25, 10, "Precio", 1)
+    pdf.cell(25, 10, "Subtotal", 1)
+    pdf.ln()
+    
+    pdf.set_font("Arial", "", 9)
+    for item in items:
+        # Ajuste de descripción larga para que no se desborde
+        desc = item['Desc'][:45] 
+        pdf.cell(30, 8, str(item['SKU']), 1)
+        pdf.cell(90, 8, desc, 1)
+        pdf.cell(20, 8, str(item['Cant']), 1)
+        pdf.cell(25, 8, f"${item.get('p', 0):.2f}", 1) # Precio unitario
+        pdf.cell(25, 8, f"${item['Subtotal']:.2f}", 1)
+        pdf.ln()
+    
+    # Total
+    pdf.ln(5)
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(190, 10, f"TOTAL FINAL: ${total:.2f}", ln=True, align="R")
+    
+    return pdf.output(dest='S').encode('latin-1')
+    
 # --- CONFIGURACIÓN ---
 DB_NAME = "catalogo_color_v2.db"
 IMG_DIR = "static/fotos"
@@ -252,15 +298,56 @@ else:
     # --- PEDIDOS TOTALES (Solo Admin) ---
     elif menu == "📊 Pedidos Totales":
         st.title("📊 Control Global de Pedidos")
+        # Obtenemos los pedidos más recientes primero
         peds = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", get_connection())
-        for _, p in peds.iterrows():
-            with st.expander(f"Pedido #{p['id']} - {p['username']} ({p['fecha']})"):
-                df_it = pd.DataFrame(json.loads(p['items']))
-                st.table(df_it)
-                st.write(f"**Total: ${p['total']:.2f}**")
-                if st.button(f"Eliminar #{p['id']}", key=f"del_{p['id']}"):
-                    get_connection().execute("DELETE FROM pedidos WHERE id=?", (p['id'],))
-                    get_connection().commit(); st.rerun()
+        
+        if peds.empty:
+            st.info("Aún no se han registrado pedidos.")
+        else:
+            for _, p in peds.iterrows():
+                with st.expander(f"📦 Pedido #{p['id']} - {p['username']} ({p['fecha']})"):
+                    # Procesar datos del pedido
+                    items_list = json.loads(p['items'])
+                    df_it = pd.DataFrame(items_list)
+                    
+                    # Mostrar tabla y total
+                    st.table(df_it)
+                    st.write(f"### Total del Pedido: ${p['total']:.2f}")
+                    
+                    st.divider()
+                    
+                    # Fila de acciones (Botones)
+                    col_pdf, col_xl, col_del = st.columns(3)
+                    
+                    # 1. Botón de PDF
+                    pdf_data = generar_pdf_pedido(p['id'], p['fecha'], p['username'], items_list, p['total'])
+                    col_pdf.download_button(
+                        label="📄 Descargar PDF",
+                        data=pdf_data,
+                        file_name=f"Pedido_{p['id']}_ColorInsumos.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                    
+                    # 2. Botón de Excel
+                    output_xl = io.BytesIO()
+                    with pd.ExcelWriter(output_xl, engine='openpyxl') as writer:
+                        df_it.to_excel(writer, index=False)
+                    col_xl.download_button(
+                        label="📈 Descargar Excel",
+                        data=output_xl.getvalue(),
+                        file_name=f"Pedido_{p['id']}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                    
+                    # 3. Botón de Eliminar
+                    if col_del.button(f"🗑️ Eliminar #{p['id']}", key=f"del_{p['id']}", type="secondary", use_container_width=True):
+                        get_connection().execute("DELETE FROM pedidos WHERE id=?", (p['id'],))
+                        get_connection().commit()
+                        st.warning(f"Pedido #{p['id']} eliminado.")
+                        time.sleep(1)
+                        st.rerun()
 
     # --- GESTIÓN DE CLIENTES ---
     elif menu == "👥 Gestión Clientes":
