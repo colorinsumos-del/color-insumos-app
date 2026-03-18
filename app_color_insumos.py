@@ -18,18 +18,13 @@ st.set_page_config(page_title="Color Insumos - Sistema Maestro", layout="wide")
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
-    # Tabla de Productos
     conn.execute('''CREATE TABLE IF NOT EXISTS productos 
                  (sku TEXT, descripcion TEXT, precio REAL, categoria TEXT, foto_path TEXT)''')
-    # Tabla de Usuarios
     conn.execute('''CREATE TABLE IF NOT EXISTS usuarios 
                  (username TEXT PRIMARY KEY, password TEXT, nombre TEXT, rol TEXT)''')
-    # Tabla de Pedidos
     conn.execute('''CREATE TABLE IF NOT EXISTS pedidos 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)''')
-    
-    # Insertar o actualizar Usuario Maestro
     try:
         conn.execute("""
             INSERT OR REPLACE INTO usuarios (username, password, nombre, rol) 
@@ -98,7 +93,7 @@ def procesar_pdf(pdf_file):
     conn = sqlite3.connect(DB_NAME)
     conn.execute("DELETE FROM productos"); df.to_sql('productos', conn, if_exists='append', index=False); conn.close()
 
-# --- INTERFAZ PRINCIPAL ---
+# --- INTERFAZ ---
 if not st.session_state.auth:
     st.title("🚀 Sistema Color Insumos")
     col1, col2 = st.columns(2)
@@ -116,7 +111,7 @@ if not st.session_state.auth:
                 st.rerun()
             else: st.error("Usuario o clave incorrecta")
     with col2:
-        st.info("Bienvenido. Inicie sesión para gestionar el catálogo o realizar pedidos.")
+        st.info("Bienvenido. Inicie sesión para realizar pedidos.")
 
 else:
     user = st.session_state.user_data
@@ -155,42 +150,68 @@ else:
     # 3. CATÁLOGO / COMPRA (Ambos)
     elif menu in ["🛒 Ver Catálogo", "🛒 Comprar"]:
         st.header("Catálogo de Productos")
-        busqueda = st.text_input("🔍 Buscar por Nombre o SKU...", key="main_search")
+        
+        # --- FILTROS FIJOS ---
+        col_bus, col_cat = st.columns([2, 1])
+        with col_bus:
+            busqueda = st.text_input("🔍 Buscar por Nombre o SKU...", key="main_search")
         
         conn = sqlite3.connect(DB_NAME)
         df_cat = pd.read_sql("SELECT * FROM productos", conn)
         conn.close()
 
         if not df_cat.empty:
-            df_ver = df_cat[(df_cat['descripcion'].str.contains(busqueda, case=False)) | (df_cat['sku'].str.contains(busqueda, case=False))] if busqueda else df_cat
-            
-            for cat in sorted(df_ver['categoria'].unique()):
-                st.subheader(cat)
-                items = df_ver[df_ver['categoria'] == cat]
-                cols = st.columns(4)
-                for idx, row in items.reset_index().iterrows():
-                    with cols[idx % 4]:
-                        with st.container(border=True):
-                            if row['foto_path'] and os.path.exists(row['foto_path']): st.image(row['foto_path'], width=140)
-                            st.markdown(f"**{row['sku']}**")
-                            st.caption(row['descripcion'])
-                            st.write(f"💰 ${row['precio']:.2f}")
-                            
-                            if user['rol'] == 'cliente':
-                                # Recuperar valor previo del carrito si existe
-                                val_previo = st.session_state.carrito.get(row['sku'], {}).get('c', 0)
-                                cant = st.number_input("Cant.", min_value=0, value=val_previo, key=f"input_{row['sku']}")
-                                if cant > 0:
-                                    st.session_state.carrito[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
-                                elif row['sku'] in st.session_state.carrito:
-                                    del st.session_state.carrito[row['sku']]
+            with col_cat:
+                lista_cats = ["Todas"] + sorted(df_cat['categoria'].unique().tolist())
+                cat_seleccionada = st.selectbox("Filtrar por Categoría:", lista_cats)
 
+            # Filtrado Lógico
+            df_ver = df_cat.copy()
+            if busqueda:
+                df_ver = df_ver[(df_ver['descripcion'].str.contains(busqueda, case=False)) | (df_ver['sku'].str.contains(busqueda, case=False))]
+            if cat_seleccionada != "Todas":
+                df_ver = df_ver[df_ver['categoria'] == cat_seleccionada]
+            
+            # --- MOSTRAR PRODUCTOS ---
+            if df_ver.empty:
+                st.warning("No se encontraron productos con esos filtros.")
+            else:
+                for cat in sorted(df_ver['categoria'].unique()):
+                    st.subheader(cat)
+                    items = df_ver[df_ver['categoria'] == cat]
+                    cols = st.columns(4)
+                    for idx, row in items.reset_index().iterrows():
+                        with cols[idx % 4]:
+                            with st.container(border=True):
+                                if row['foto_path'] and os.path.exists(row['foto_path']): 
+                                    st.image(row['foto_path'], use_container_width=True)
+                                st.markdown(f"**{row['sku']}**")
+                                st.caption(row['descripcion'])
+                                st.write(f"💰 ${row['precio']:.2f}")
+                                
+                                if user['rol'] == 'cliente':
+                                    val_previo = st.session_state.carrito.get(row['sku'], {}).get('c', 0)
+                                    cant = st.number_input("Cantidad:", min_value=0, value=val_previo, key=f"input_{row['sku']}")
+                                    
+                                    if cant > 0:
+                                        st.session_state.carrito[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
+                                        st.success("Añadido ✅")
+                                    elif row['sku'] in st.session_state.carrito:
+                                        del st.session_state.carrito[row['sku']]
+
+        # BARRA LATERAL DEL CARRITO
         if user['rol'] == 'cliente' and st.session_state.carrito:
             st.sidebar.divider()
-            st.sidebar.subheader("🛒 Tu Pedido")
+            st.sidebar.subheader("🛒 Resumen de Pedido")
             total = 0
             for k, v in st.session_state.carrito.items():
-                st.sidebar.write(f"{v['c']}x {k}")
+                st.sidebar.write(f"**{v['c']}** x {k}")
                 total += v['p'] * v['c']
-            st.sidebar.write(f"**Total: ${total:.2f}**")
-            if st.sidebar.button("✅ Confirmar"): st.sidebar.success("Pedido recibido.")
+            st.sidebar.write(f"### Total: ${total:.2f}")
+            if st.sidebar.button("✅ Confirmar Pedido"):
+                st.sidebar.success("¡Pedido enviado con éxito!")
+
+    # 4. PEDIDOS RECIBIDOS (Solo Admin)
+    elif menu == "📊 Pedidos Recibidos":
+        st.header("Bandeja de Entrada de Pedidos")
+        st.info("Aquí verás los pedidos confirmados por tus clientes.")
