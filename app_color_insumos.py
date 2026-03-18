@@ -130,25 +130,40 @@ else:
             nav = [cart_lbl, "📊 Pedidos Totales", "📁 Cargar PDF", "👥 Gestión Clientes"]
         menu = st.radio("Navegación", nav)
 
-    # --- TIENDA ---
+   # --- TIENDA ---
     if "🛒" in menu:
         t1, t2 = st.tabs(["🛍️ Catálogo", "🧾 Mi Carrito"])
         with t1:
             df = obtener_catalogo_cache()
             c1, c2 = st.columns([2, 1])
             busq = c1.text_input("🔍 Buscar SKU o Nombre...")
+            
+            # Obtener categorías únicas para el desplegable
             cats = ["Todas"] + sorted(df['categoria'].unique().tolist())
-            cat_sel = c2.selectbox("Categoría", cats)
+            cat_sel = c2.selectbox("Filtrar por Categoría", cats)
             
+            # Aplicar filtros
             df_v = df.copy()
-            if busq: df_v = df_v[df_v['descripcion'].str.contains(busq, case=False) | df_v['sku'].str.contains(busq, case=False)]
-            if cat_sel != "Todas": df_v = df_v[df_v['categoria'] == cat_sel]
+            if busq:
+                df_v = df_v[df_v['descripcion'].str.contains(busq, case=False) | df_v['sku'].str.contains(busq, case=False)]
             
-            for cat in sorted(df_v['categoria'].unique()):
-                with st.expander(cat, expanded=False    ):
-                    cols = st.columns(4)
-                    for idx, row in df_v[df_v['categoria'] == cat].reset_index().iterrows():
-                        with cols[idx % 4]: card_producto(row, idx)
+            if cat_sel != "Todas":
+                df_v = df_v[df_v['categoria'] == cat_sel]
+
+            st.divider()
+
+            # MOSTRAR RESULTADOS (Sin el bucle de expanders)
+            if df_v.empty:
+                st.warning("No se encontraron productos con esos criterios.")
+            else:
+                # Mostramos un título dinámico según la selección
+                titulo = f"Mostrando: {cat_sel}" if cat_sel != "Todas" else "Todos los Productos"
+                st.subheader(titulo)
+                
+                cols = st.columns(4)
+                for idx, row in df_v.reset_index().iterrows():
+                    with cols[idx % 4]:
+                        card_producto(row, idx)
 
         with t2:
             if not carrito_actual: st.info("Carrito vacío.")
