@@ -121,7 +121,7 @@ else:
             if busq: df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
             
             for cat in sorted(df['categoria'].unique()):
-                with st.expander(cat, expanded=True):
+                with st.expander(cat, expanded=False):
                     sub = df[df['categoria'] == cat].reset_index()
                     cols = st.columns(4)
                     for i, row in sub.iterrows():
