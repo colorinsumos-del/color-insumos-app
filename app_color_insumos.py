@@ -112,20 +112,56 @@ else:
             st.session_state.auth = False
             st.rerun()
 
+    # --- MÓDULO TIENDA (OPTIMIZADO CON FILTROS DIRECTOS) ---
     if menu == "🛍️ Tienda":
         st.title("🛍️ Catálogo Color Insumos")
         df = cargar_catalogo()
-        if df.empty: st.info("Sube un PDF para activar el inventario.")
+        
+        if df.empty: 
+            st.info("Sube un PDF para activar el inventario.")
         else:
-            busq = st.text_input("🔍 Buscar por SKU o Descripción...")
-            if busq: df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
+            # --- BARRA DE HERRAMIENTAS (Búsqueda + Filtro + Reset) ---
+            col_busq, col_cat, col_reset = st.columns([2, 1, 0.5])
             
-            for cat in sorted(df['categoria'].unique()):
-                with st.expander(cat, expanded=False):
-                    sub = df[df['categoria'] == cat].reset_index()
-                    cols = st.columns(4)
-                    for i, row in sub.iterrows():
-                        with cols[i % 4]: card_producto(row, i)
+            with col_busq:
+                busq = st.text_input("🔍 Buscar por SKU o Descripción...", key="input_busq")
+            
+            with col_cat:
+                lista_cats = ["Todas"] + sorted(df['categoria'].unique().tolist())
+                cat_sel = st.selectbox("📂 Categoría", lista_cats, key="sel_cat")
+            
+            with col_reset:
+                st.write(" ") # Espaciador para alinear con los inputs
+                if st.button("🔄 Reset", use_container_width=True):
+                    # Al resetear, limpiamos los valores en session_state
+                    st.session_state.input_busq = ""
+                    st.session_state.sel_cat = "Todas"
+                    st.rerun()
+
+            # --- LÓGICA DE FILTRADO ---
+            df_filtrado = df.copy()
+            
+            if busq:
+                df_filtrado = df_filtrado[
+                    df_filtrado['descripcion'].str.contains(busq, case=False) | 
+                    df_filtrado['sku'].str.contains(busq, case=False)
+                ]
+            
+            if cat_sel != "Todas":
+                df_filtrado = df_filtrado[df_filtrado['categoria'] == cat_sel]
+
+            # --- VISUALIZACIÓN DE PRODUCTOS ---
+            st.divider()
+            if df_filtrado.empty:
+                st.warning("No se encontraron productos con esos filtros.")
+            else:
+                st.caption(f"Mostrando {len(df_filtrado)} productos")
+                
+                # Cuadrícula de productos sin expanders
+                cols = st.columns(4)
+                for i, (_, row) in enumerate(df_filtrado.iterrows()):
+                    with cols[i % 4]:
+                        card_producto(row, i)
 
     elif "🛒" in menu:
         st.title("🛒 Carrito de Compras")
