@@ -145,7 +145,7 @@ else:
             if cat_sel != "Todas": df_v = df_v[df_v['categoria'] == cat_sel]
             
             for cat in sorted(df_v['categoria'].unique()):
-                with st.expander(cat, expanded=True):
+                with st.expander(cat, expanded=False    ):
                     cols = st.columns(4)
                     for idx, row in df_v[df_v['categoria'] == cat].reset_index().iterrows():
                         with cols[idx % 4]: card_producto(row, idx)
