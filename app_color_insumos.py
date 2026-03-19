@@ -32,15 +32,15 @@ st.markdown("""
     }
     .floating-totalizer {
         background-color: #ffffff;
-        padding: 15px;
+        padding: 15 padding: 15px;
         border-radius: 10px;
         border: 1px solid #e0e0e0;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         margin-bottom: 20px;
-        color: #000000 !important; /* Forzar texto negro */
+        color: #000000 !important;
     }
-    .floating-totalizer p, .floating-totalizer b {
-        color: #000000 !important; /* Asegurar que párrafos y negritas sean negros */
+    .floating-totalizer p, .floating-totalizer b, .floating-totalizer span {
+        color: #000000 !important;
         margin: 0;
     }
     .sku-text { font-weight: bold; color: #1f77b4; margin-bottom: 0; font-size: 0.85rem; }
@@ -73,16 +73,16 @@ def init_db():
 def auto_categorizar(descripcion):
     desc = descripcion.lower()
     categorias = {
-        "Oficina": ["clip", "engrapadora", "perforadora", "archivo", "carpeta", "toner", "tinta", "escritorio"],
-        "Escolar": ["cuaderno", "lapiz", "morral", "sacapunta", "regla", "borrador", "escolar", "colores"],
-        "Juegos Didácticos": ["rompecabezas", "lego", "didactico", "juego", "mesa", "puzzle", "educativo"],
-        "Artes Plásticas": ["pincel", "oleo", "acrilico", "bastidor", "lienzo", "arcilla", "tempera", "frio"],
-        "Papelería Creativa": ["cartulina", "escarcha", "foami", "pegatina", "silicon", "glitter", "creativa"]
+        "Oficina": ["clip", "engrapadora", "perforadora", "archivo", "carpeta", "toner", "tinta", "escritorio", "boligrafo", "resma", "sello"],
+        "Escolar": ["cuaderno", "lapiz", "morral", "sacapunta", "regla", "borrador", "escolar", "colores", "pega", "block"],
+        "Juegos Didácticos": ["rompecabezas", "lego", "didactico", "juego", "mesa", "puzzle", "educativo", "masa", "plastilina"],
+        "Artes Plásticas": ["pincel", "oleo", "acrilico", "bastidor", "lienzo", "arcilla", "tempera", "frio", "pintura", "acuarela"],
+        "Papelería Creativa": ["cartulina", "escarcha", "foami", "pegatina", "silicon", "glitter", "creativa", "diseño", "troquel", "seda"]
     }
     for cat, keywords in categorias.items():
         if any(kw in desc for kw in keywords):
             return cat
-    return "Otros"
+    return "Varios"
 
 def limpiar_precio(texto):
     if not texto or str(texto).lower() == "none": return 0.0
@@ -177,14 +177,18 @@ else:
         
         st.markdown("### 💳 Resumen de Cuenta")
         with st.container():
+            dcto_bcv = (subtotal_v * 0.10 if subtotal_v >= 100 else 0)
+            dcto_zelle = (subtotal_v * 0.30)
             st.markdown(f"""
                 <div class="floating-totalizer">
-                    <p style='margin:0'>Items: <b>{cant_v}</b></p>
-                    <p style='margin:0'>Subtotal: <b>${subtotal_v:.2f}</b></p>
-                    <hr style='margin:10px 0'>
-                    <p style='margin:0; font-size:0.8rem; color:#666'>Dcto. Proyectado:</p>
-                    <p style='margin:0; color:#d9534f'>-$ { (subtotal_v * 0.10 if subtotal_v >= 100 else 0):.2f} (BCV)</p>
-                    <p style='margin:0; color:#5cb85c'>-$ { (subtotal_v * 0.30):.2f} (Zelle)</p>
+                    <p>Items: <b>{cant_v}</b></p>
+                    <p>Subtotal: <b>${subtotal_v:.2f}</b></p>
+                    <hr style='margin:10px 0; border-color:#eee'>
+                    <p style='font-size:0.8rem; font-weight:bold'>Dctos. según pago:</p>
+                    <p style='font-size:0.85rem'>🔹 BCV: <span style='color:#d9534f'>-${dcto_bcv:.2f}</span></p>
+                    <p style='font-size:0.85rem'>🔹 Zelle: <span style='color:#5cb85c'>-${dcto_zelle:.2f}</span></p>
+                    <hr style='margin:10px 0; border-color:#eee'>
+                    <p style='font-size:0.9rem'>Total BCV: <b>${(subtotal_v - dcto_bcv):.2f}</b></p>
                 </div>
             """, unsafe_allow_html=True)
             
@@ -197,20 +201,20 @@ else:
         st.title("🛍️ Catálogo de Productos")
         
         c1, c2, c3 = st.columns([3, 2, 1])
-        busq = c1.text_input("🔍 Buscar SKU o nombre...", key="tienda_search")
+        busq = c1.text_input("🔍 ¿Qué buscas hoy? (SKU o nombre)", key="tienda_search")
         df_cats = pd.read_sql("SELECT DISTINCT categoria FROM productos", get_connection())
-        cat_sel = c2.selectbox("📂 Filtrar por Rubro", ["Todas"] + df_cats['categoria'].tolist())
-        if c3.button("✖️ Limpiar Filtros", use_container_width=True): st.rerun()
+        cat_sel = c2.selectbox("📂 Explorar por Segmento", ["Todos los artículos"] + df_cats['categoria'].tolist())
+        if c3.button("✖️ Limpiar Vista", use_container_width=True): st.rerun()
 
         query = "SELECT * FROM productos WHERE 1=1"
         params = []
-        if cat_sel != "Todas": query += " AND categoria = ?"; params.append(cat_sel)
+        if cat_sel != "Todos los artículos": query += " AND categoria = ?"; params.append(cat_sel)
         if busq: query += " AND (descripcion LIKE ? OR sku LIKE ?)"; params.extend([f"%{busq}%", f"%{busq}%"])
         
         df = pd.read_sql(query, get_connection(), params=params)
 
         if df.empty:
-            st.info("No se encontraron productos.")
+            st.info("No se encontraron productos en este segmento.")
         else:
             items_pag = 20
             total_p = (len(df) // items_pag) + (1 if len(df) % items_pag > 0 else 0)
@@ -226,10 +230,9 @@ else:
                     st.markdown(f'<p class="sku-text">{row.sku} <span style="color:#888; font-weight:normal">| {row.categoria}</span></p>', unsafe_allow_html=True)
                     st.markdown(f'<p class="desc-text">{row.descripcion}</p>', unsafe_allow_html=True)
                     if row.sku in carrito_usuario:
-                        st.markdown('<span class="in-cart-indicator">✅ En el carrito</span>', unsafe_allow_html=True)
+                        st.markdown('<span class="in-cart-indicator">✅ Ya en carrito</span>', unsafe_allow_html=True)
                 r3.markdown(f"#### ${row.precio:.2f}")
                 
-                # Controles compactos en Tienda
                 b1, b2, b3, b4 = r4.columns([0.8, 1, 0.8, 1.2])
                 if b1.button("➖", key=f"t_m_{row.sku}"):
                     if row.sku in carrito_usuario:
@@ -245,11 +248,11 @@ else:
                     else: carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": 1}
                     guardar_carrito_db(uid, carrito_usuario); st.rerun()
                 
-                if b4.button("🗑️", key=f"t_del_{row.sku}", help="Quitar del carrito"):
+                if b4.button("🗑️", key=f"t_del_{row.sku}", help="Remover"):
                     if row.sku in carrito_usuario:
                         del carrito_usuario[row.sku]
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
-                st.markdown("<hr style='margin:5px 0; border-color:#f0f0f0'>", unsafe_allow_html=True)
+                st.markdown("<hr style='margin:5px 0; border-color:#f9f9f9'>", unsafe_allow_html=True)
 
     # --- MÓDULO CARRITO ---
     elif menu.startswith("🛒 Carrito"):
@@ -301,10 +304,10 @@ else:
                              (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
                 conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
                 conn.commit()
-                st.success("Pedido registrado.")
+                st.success("Pedido registrado exitosamente.")
                 st.balloons()
 
-    # --- GESTIÓN (MANTENIDA) ---
+    # --- GESTIÓN ---
     elif menu == "📊 Ventas":
         st.title("📊 Control de Pedidos")
         df_p = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", get_connection())
@@ -312,6 +315,14 @@ else:
 
     elif menu == "📁 Carga":
         st.title("📁 Importar Catálogo PDF")
+        if st.button("🔄 Re-categorizar Todo el Inventario"):
+            conn = get_connection()
+            productos = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
+            for s, d in productos:
+                conn.execute("UPDATE productos SET categoria = ? WHERE sku = ?", (auto_categorizar(d), s))
+            conn.commit()
+            st.success("Categorías actualizadas según la nueva lógica.")
+
         f = st.file_uploader("Archivo PDF", type="pdf")
         if f and st.button("Procesar"):
             doc = fitz.open(stream=f.read(), filetype="pdf")
@@ -324,7 +335,7 @@ else:
                         if len(sku) > 2:
                             cat = auto_categorizar(desc)
                             conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, categoria=excluded.categoria", (sku, desc, pre, cat))
-            conn.commit(); st.success("Inventario actualizado")
+            conn.commit(); st.success("Inventario actualizado y segmentado")
 
     elif menu == "🖼️ Fotos":
         st.title("🖼️ Sincronización")
