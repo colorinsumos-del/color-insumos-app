@@ -4,9 +4,7 @@ import pandas as pd
 import sqlite3
 import os
 import json
-import time
 import re
-import io
 from datetime import datetime
 from PIL import Image
 
@@ -35,13 +33,18 @@ def init_db():
                   items TEXT, metodo_pago TEXT, subtotal REAL, descuento REAL, total REAL, status TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS carritos 
                  (username TEXT PRIMARY KEY, data TEXT)''')
-    
-    # Admin por defecto
-    conn.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre, rol, direccion, telefono) VALUES (?,?,?,?,?,?)", 
-                 ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin', 'Maracaibo', '04126901346'))
+    conn.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre, rol) VALUES (?,?,?,?)", 
+                 ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin'))
     conn.commit()
 
-# --- FUNCIONES DE SOPORTE ---
+def limpiar_precio(texto):
+    if not texto or str(texto).lower() == "none": return 0.0
+    clean = re.sub(r'[^\d,.]', '', str(texto)).replace(',', '.')
+    try:
+        return float(clean)
+    except:
+        return 0.0
+
 def guardar_carrito_db(username, carrito_dict):
     conn = get_connection()
     conn.execute("INSERT OR REPLACE INTO carritos (username, data) VALUES (?, ?)", (username, json.dumps(carrito_dict)))
@@ -52,20 +55,7 @@ def cargar_carrito_db(username):
     res = conn.execute("SELECT data FROM carritos WHERE username=?", (username,)).fetchone()
     return json.loads(res[0]) if res else {}
 
-def limpiar_precio(texto):
-    if not texto or str(texto).lower() == "none": return 0.0
-    # Limpieza para el formato del PDF de Pointer
-    clean = re.sub(r'[^\d,.]', '', str(texto)).replace(',', '.')
-    try:
-        return float(clean)
-    except:
-        return 0.0
-
-@st.cache_data(ttl=60)
-def cargar_catalogo():
-    return pd.read_sql("SELECT * FROM productos", get_connection())
-
-# --- INICIO DE SISTEMA ---
+# --- FLUJO DE SESIÓN ---
 init_db()
 if 'auth' not in st.session_state: st.session_state.auth = False
 
@@ -73,7 +63,7 @@ if not st.session_state.auth:
     st.title("🔐 Acceso Color Insumos")
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
-    if st.button("Entrar", type="primary"):
+    if st.button("Entrar"):
         res = get_connection().execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u, p)).fetchone()
         if res:
             st.session_state.auth = True
@@ -85,191 +75,112 @@ else:
     uid = user['user']
     carrito_usuario = cargar_carrito_db(uid)
 
-    # Cálculo de totales para el Sidebar
-    subtotal_live = sum(item['p'] * item['c'] for item in carrito_usuario.values())
-    desc_live = subtotal_live * 0.10 if subtotal_live > 100 else 0.0
-    total_live = subtotal_live - desc_live
-
     with st.sidebar:
         st.header(f"👤 {user['nombre']}")
-        st.write(f"Rol: {user['rol'].upper()}")
-        st.divider()
-        st.subheader("🛒 Resumen")
-        st.write(f"Items: {len(carrito_usuario)}")
-        st.write(f"Total: **${total_live:.2f}**")
-        
         opc = ["🛍️ Tienda", f"🛒 Carrito ({len(carrito_usuario)})", "📜 Mis Pedidos"]
-        if user['rol'] == 'admin': 
-            opc += ["📊 Gestión Ventas", "📁 Cargar PDF", "👥 Usuarios"]
-        
-        menu = st.radio("Menú Principal", opc)
-        if st.button("Cerrar Sesión"): 
+        if user['rol'] == 'admin': opc += ["📁 Cargar PDF", "👥 Usuarios"]
+        menu = st.radio("Menú", opc)
+        if st.button("Salir"): 
             st.session_state.auth = False
             st.rerun()
 
-    # --- MÓDULO TIENDA ---
+    # --- MÓDULO TIENDA (CORREGIDO) ---
     if menu == "🛍️ Tienda":
         st.title("🛍️ Catálogo de Productos")
-        df = cargar_catalogo()
-        busq = st.text_input("🔍 Buscar por SKU o Descripción...")
-        if busq: 
-            df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
-
-        for i, row in df.iterrows():
-            item_carrito = carrito_usuario.get(row['sku'])
-            with st.container(border=(item_carrito is not None)):
-                c1, c2, c3, c4, c5, c6 = st.columns([1, 1.5, 4, 1, 1, 1])
-                with c1:
-                    if row['foto_path'] and os.path.exists(row['foto_path']):
-                        st.image(row['foto_path'], width=80)
-                    else: st.image("https://via.placeholder.com/80?text=📦", width=80)
-                
-                c2.markdown(f"**{row['sku']}**")
-                c3.write(row['descripcion'])
-                c4.markdown(f"**${row['precio']:.2f}**")
-                
-                cant = c5.number_input("Cant", 1, 1000, int(item_carrito['c']) if item_carrito else 1, key=f"q_{row['sku']}", label_visibility="collapsed")
-                
-                if item_carrito:
-                    if c6.button("🗑️", key=f"del_{row['sku']}"):
-                        del carrito_usuario[row['sku']]
-                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
-                else:
-                    if c6.button("🛒", key=f"add_{row['sku']}"):
-                        carrito_usuario[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
-                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
-
-    # --- MÓDULO CARGAR PDF (EXTRAÍDO DEL ORIGINAL) ---
-    elif menu == "📁 Cargar PDF":
-        st.title("📁 Importar Inventario (Pointer)")
-        f = st.file_uploader("Subir PDF de Lista de Precios", type="pdf")
         
-        if f and st.button("Procesar Celdas del PDF"):
-            with st.status("Leyendo celdas y fotos...") as status:
+        # Forzar lectura fresca de la base de datos
+        conn = get_connection()
+        df = pd.read_sql("SELECT * FROM productos", conn)
+        
+        if df.empty:
+            st.info("El catálogo está vacío. Por favor, carga un PDF desde el panel de administrador.")
+        else:
+            busq = st.text_input("🔍 Buscar por SKU o Descripción...")
+            if busq:
+                df = df[df['descripcion'].str.contains(busq, case=False, na=False) | 
+                        df['sku'].str.contains(busq, case=False, na=False)]
+
+            for i, row in df.iterrows():
+                item_carrito = carrito_usuario.get(row['sku'])
+                with st.container(border=True):
+                    c1, c2, c3, c4, c5 = st.columns([1, 4, 1, 1, 1])
+                    with c1:
+                        if row['foto_path'] and os.path.exists(row['foto_path']):
+                            st.image(row['foto_path'], width=100)
+                        else:
+                            st.image("https://via.placeholder.com/100?text=SIN+FOTO", width=100)
+                    
+                    c2.subheader(row['sku'])
+                    c2.write(row['descripcion'])
+                    c3.write(f"**${row['precio']:.2f}**")
+                    
+                    cant = c4.number_input("Cant", 1, 100, 1, key=f"q_{row['sku']}")
+                    
+                    if c5.button("🛒 Añadir", key=f"add_{row['sku']}"):
+                        carrito_usuario[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
+                        guardar_carrito_db(uid, carrito_usuario)
+                        st.toast(f"Añadido: {row['sku']}")
+                        st.rerun()
+
+    # --- MÓDULO CARGAR PDF (BASADO EN TUS CELDAS) ---
+    elif menu == "📁 Cargar PDF":
+        st.title("📁 Importador de Inventario")
+        f = st.file_uploader("Sube el PDF de Pointer", type="pdf")
+        if f and st.button("Procesar Inventario"):
+            with st.status("Analizando PDF...") as status:
                 doc = fitz.open(stream=f.read(), filetype="pdf")
                 conn = get_connection()
                 
                 for page in doc:
-                    # Pointer usa tablas con líneas visibles, find_tables es ideal aquí
                     tabs = page.find_tables()
-                    if tabs:
-                        for tab in tabs:
-                            # Convertimos la tabla detectada en un DataFrame de Pandas
-                            df_tab = tab.to_pandas()
-                            
-                            # Basado en tu archivo original:
-                            # Columna 0: SKU
-                            # Columna 1: IMAGEN (aquí buscamos la foto por coordenadas)
-                            # Columna 2: DESCRIPCIÓN
-                            # Columna 3 o 4: PRECIO DIVISAS (dependiendo de la versión del PDF)
-                            for row_idx, row in df_tab.iterrows():
-                                try:
-                                    sku = str(row.iloc[0]).strip()
-                                    # Limpiamos el SKU de saltos de línea que vienen del PDF
-                                    sku = sku.replace('\n', '').strip()
+                    for tab in tabs:
+                        df_tab = tab.to_pandas()
+                        for row_idx, row in df_tab.iterrows():
+                            try:
+                                # Según tu archivo: Col 0=SKU, Col 2=Desc, Col 3=Precio
+                                sku = str(row.iloc[0]).strip().replace('\n', '')
+                                desc = str(row.iloc[2]).strip().replace('\n', ' ')
+                                precio = limpiar_precio(row.iloc[3])
+                                
+                                if len(sku) > 2 and precio > 0:
+                                    foto_path = ""
+                                    # Buscar imagen en celda 1
+                                    celda = tab.rows[row_idx].cells[1]
+                                    if celda:
+                                        rect = fitz.Rect(celda)
+                                        for img in page.get_image_info(hashes=True):
+                                            if rect.intersects(fitz.Rect(img['bbox'])):
+                                                pix = fitz.Pixmap(doc, img['xref'])
+                                                if pix.n - pix.alpha > 3: pix = fitz.Pixmap(fitz.csRGB, pix)
+                                                safe_sku = re.sub(r'[\\/*?:"<>|]', "_", sku)
+                                                p_path = os.path.join(IMG_DIR, f"{safe_sku}.png")
+                                                pix.save(p_path)
+                                                foto_path = p_path
+                                                break
                                     
-                                    desc = str(row.iloc[2]).strip().replace('\n', ' ')
-                                    
-                                    # Intentamos obtener el precio de la columna 3 (Precio Divisas)
-                                    precio = limpiar_precio(row.iloc[3])
-                                    
-                                    if len(sku) > 2 and precio > 0:
-                                        foto_path = ""
-                                        # Lógica de extracción de imagen por celda (Columna 1)
-                                        celda_img = tab.rows[row_idx].cells[1]
-                                        if celda_img:
-                                            rect_celda = fitz.Rect(celda_img)
-                                            # Buscamos qué imagen del PDF "cae" dentro de esta celda
-                                            for img_info in page.get_image_info(hashes=True):
-                                                if rect_celda.intersects(fitz.Rect(img_info['bbox'])):
-                                                    pix = fitz.Pixmap(doc, img_info['xref'])
-                                                    
-                                                    # Validación de colores para evitar errores de visualización
-                                                    if pix.n - pix.alpha > 3: 
-                                                        pix = fitz.Pixmap(fitz.csRGB, pix)
-                                                    
-                                                    # Limpieza de nombre de archivo (evita errores con "/" en el SKU)
-                                                    safe_sku = re.sub(r'[\\/*?:"<>|]', "_", sku)
-                                                    p_path = os.path.join(IMG_DIR, f"{safe_sku}.png")
-                                                    pix.save(p_path)
-                                                    foto_path = p_path
-                                                    break
-                                        
-                                        # Guardado en base de datos con ON CONFLICT para actualizar precios
-                                        conn.execute("""
-                                            INSERT INTO productos (sku, descripcion, precio, categoria, foto_path) 
-                                            VALUES (?,?,?,?,?) 
-                                            ON CONFLICT(sku) 
-                                            DO UPDATE SET 
-                                                precio=excluded.precio, 
-                                                descripcion=excluded.descripcion,
-                                                foto_path=CASE WHEN excluded.foto_path != '' THEN excluded.foto_path ELSE foto_path END
-                                        """, (sku, desc, precio, "General", foto_path))
-                                except Exception as e:
-                                    continue # Si una fila falla, sigue con la siguiente
-                
+                                    conn.execute("""INSERT INTO productos (sku, descripcion, precio, categoria, foto_path) 
+                                                 VALUES (?,?,?,?,?) ON CONFLICT(sku) 
+                                                 DO UPDATE SET precio=excluded.precio, descripcion=excluded.descripcion, foto_path=excluded.foto_path""", 
+                                                 (sku, desc, precio, "General", foto_path))
+                            except: continue
                 conn.commit()
-                status.update(label="¡Inventario actualizado con éxito!", state="complete")
+                status.update(label="Inventario cargado correctamente!", state="complete")
             st.rerun()
 
-    # --- MÓDULO USUARIOS (COMPLETO) ---
+    # --- OTROS MÓDULOS (USUARIOS, CARRITO) ---
+    elif "Carrito" in menu:
+        st.title("🛒 Tu Carrito")
+        if not carrito_usuario:
+            st.info("Tu carrito está vacío")
+        else:
+            for s, i in list(carrito_usuario.items()):
+                st.write(f"**{s}** - {i['desc']} | ${i['p']} x {i['c']}")
+                if st.button("Eliminar", key=f"del_{s}"):
+                    del carrito_usuario[s]
+                    guardar_carrito_db(uid, carrito_usuario)
+                    st.rerun()
+
     elif menu == "👥 Usuarios":
-        st.title("👥 Gestión de Clientes y Equipo")
-        t1, t2 = st.tabs(["Lista de Usuarios", "➕ Crear Nuevo"])
-        
-        with t1:
-            bus_cli = st.text_input("Buscar por nombre, RIF o ciudad...")
-            df_u = pd.read_sql("SELECT * FROM usuarios", get_connection())
-            if bus_cli:
-                df_u = df_u[df_u['nombre'].str.contains(bus_cli, case=False, na=False)]
-            
-            for _, cli in df_u.iterrows():
-                with st.expander(f"👤 {cli['nombre']} | {cli['rol'].upper()}"):
-                    with st.form(key=f"ed_u_{cli['username']}"):
-                        col1, col2 = st.columns(2)
-                        en = col1.text_input("Nombre", value=cli['nombre'])
-                        erif = col2.text_input("RIF", value=cli.get('rif', ''))
-                        ep = col1.text_input("Clave", value=cli['password'])
-                        et = col2.text_input("Teléfono", value=cli['telefono'])
-                        ec = col1.text_input("Ciudad", value=cli.get('ciudad', ''))
-                        ed = st.text_area("Dirección", value=cli['direccion'])
-                        ero = st.selectbox("Rol", ["cliente", "admin"], index=0 if cli['rol']=='cliente' else 1)
-                        
-                        b1, b2 = st.columns(2)
-                        if b1.form_submit_button("💾 Guardar"):
-                            get_connection().execute(
-                                "UPDATE usuarios SET nombre=?, password=?, telefono=?, direccion=?, rif=?, ciudad=?, rol=? WHERE username=?",
-                                (en, ep, et, ed, erif, ec, ero, cli['username'])
-                            )
-                            get_connection().commit(); st.success("Actualizado"); st.rerun()
-                        if b2.form_submit_button("🗑️ Eliminar"):
-                            get_connection().execute("DELETE FROM usuarios WHERE username=?", (cli['username'],))
-                            get_connection().commit(); st.rerun()
-
-        with t2:
-            with st.form("nuevo_u"):
-                st.subheader("Registrar Nuevo Usuario")
-                c1, c2 = st.columns(2)
-                nu = c1.text_input("Correo/Usuario")
-                np = c2.text_input("Contraseña")
-                nn = c1.text_input("Nombre Completo")
-                nr = c2.selectbox("Rol", ["cliente", "admin"])
-                if st.form_submit_button("🚀 Crear Usuario"):
-                    get_connection().execute("INSERT INTO usuarios (username, password, nombre, rol) VALUES (?,?,?,?)", (nu, np, nn, nr))
-                    get_connection().commit(); st.success("Creado con éxito"); st.rerun()
-
-    # --- GESTIÓN VENTAS Y PEDIDOS ---
-    elif "Pedidos" in menu or "Ventas" in menu:
-        st.title("📜 Historial de Transacciones")
-        query = "SELECT * FROM pedidos ORDER BY id DESC" if user['rol'] == 'admin' else f"SELECT * FROM pedidos WHERE username='{uid}'"
-        df_p = pd.read_sql(query, get_connection())
-        
-        for _, p in df_p.iterrows():
-            with st.expander(f"Pedido #{p['id']} - {p['fecha']} | Total: ${p['total']:.2f}"):
-                st.write(f"**Cliente:** {p['cliente_nombre']} | **Status:** {p['status']}")
-                st.table(pd.DataFrame(json.loads(p['items'])))
-                if user['rol'] == 'admin':
-                    ns = st.selectbox("Cambiar Estado", ["Pendiente", "Pagado", "Enviado"], key=f"s_{p['id']}")
-                    if st.button("Actualizar", key=f"b_{p['id']}"):
-                        get_connection().execute("UPDATE pedidos SET status=? WHERE id=?", (ns, p['id']))
-                        get_connection().commit(); st.rerun()
+        st.title("👥 Gestión de Usuarios")
+        df_u = pd.read_sql("SELECT * FROM usuarios", get_connection())
+        st.dataframe(df_u)
