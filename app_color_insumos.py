@@ -170,8 +170,25 @@ else:
     uid = user['user']
     carrito_usuario = cargar_carrito_db(uid)
 
+    # --- CÁLCULO DE TOTALES EN TIEMPO REAL PARA SIDEBAR ---
+    subtotal_live = sum(item['p'] * item['c'] for item in carrito_usuario.values())
+    # Estimado de descuento para el monitor lateral (usando lógica base de >100$)
+    desc_live = subtotal_live * 0.10 if subtotal_live > 100 else 0.0
+    total_live = subtotal_live - desc_live
+
     with st.sidebar:
         st.header(f"👤 {user['nombre']}")
+        
+        # MONITOR FLOTANTE DE TOTALES
+        with st.container(border=True):
+            st.subheader("📊 Resumen en Vivo")
+            st.write(f"Productos: {len(carrito_usuario)}")
+            st.write(f"Subtotal: **${subtotal_live:.2f}**")
+            st.write(f"Desc. Est: **-${desc_live:.2f}**")
+            st.divider()
+            st.write(f"### Total: ${total_live:.2f}")
+            st.caption("Nota: El descuento final se calcula en el carrito según el método de pago.")
+
         opc = ["🛍️ Tienda", f"🛒 Carrito ({len(carrito_usuario)})", "📜 Mis Pedidos"]
         if user['rol'] == 'admin': opc += ["📊 Gestión Ventas", "📁 Cargar PDF", "👥 Clientes"]
         menu = st.radio("Menú", opc)
@@ -190,22 +207,21 @@ else:
         if busq: df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
         if cat_sel != "Todas": df = df[df['categoria'] == cat_sel]
 
-        # --- DISEÑO DE LISTA COMPACTA CON INDICADOR ---
+        # --- DISEÑO DE LISTA COMPACTA ---
         st.divider()
-        h1, h2, h3, h4, h5, h6 = st.columns([0.8, 1.2, 4, 1, 1, 1])
+        h1, h2, h3, h4, h5, h6 = st.columns([0.8, 1.2, 4, 1, 1.2, 1])
         h1.caption("Imagen")
         h2.caption("SKU")
         h3.caption("Descripción")
         h4.caption("Precio")
-        h5.caption("Cant.")
+        h5.caption("Cantidad")
         h6.caption("Estado")
         st.divider()
 
         for i, row in df.iterrows():
             en_carrito = row['sku'] in carrito_usuario
-            # Si está en el carrito, usamos un contenedor con borde resaltado
             with st.container(border=en_carrito):
-                col1, col2, col3, col4, col5, col6 = st.columns([0.8, 1.2, 4, 1, 1, 1])
+                col1, col2, col3, col4, col5, col6 = st.columns([0.8, 1.2, 4, 1, 1.2, 1])
                 
                 with col1:
                     if row['foto_path'] and os.path.exists(row['foto_path']):
@@ -217,12 +233,11 @@ else:
                 col3.write(row['descripcion'])
                 col4.markdown(f"**${row['precio']:.2f}**")
                 
-                cant = col5.number_input("n", 1, 500, 1, key=f"q_{row['sku']}_{i}", label_visibility="collapsed")
+                # CONTROL +/- INTUITIVO EN CATÁLOGO
+                cant = col5.number_input("Cant", 1, 1000, 1, key=f"q_{row['sku']}_{i}", label_visibility="collapsed")
                 
-                # Indicador visual en el botón / estado
                 if en_carrito:
-                    if col6.button("✅ En Carrito", key=f"btn_{row['sku']}_{i}", help="Ya está en tu lista"):
-                        st.toast("💡 Ya lo tienes en el carrito")
+                    col6.info("✅ En Carrito")
                 else:
                     if col6.button("🛒 Añadir", key=f"btn_{row['sku']}_{i}"):
                         carrito_actual = cargar_carrito_db(uid)
@@ -243,10 +258,18 @@ else:
                 monto = info['p'] * info['c']
                 total_b += monto
                 with st.container(border=True):
-                    c1, c2, c3 = st.columns([3, 1, 0.5])
+                    c1, c2, c3, c4 = st.columns([3, 1, 1.2, 0.5])
                     c1.write(f"**{sku}** - {info['desc']}")
-                    c2.write(f"{info['c']} x ${info['p']:.2f} = ${monto:.2f}")
-                    if c3.button("🗑️", key=f"del_{sku}"):
+                    c2.write(f"${info['p']:.2f}")
+                    
+                    # CONTROL +/- EN EL CARRITO PARA AJUSTE INMEDIATO
+                    new_c = c3.number_input("Cant", 1, 1000, int(info['c']), key=f"cart_q_{sku}", label_visibility="collapsed")
+                    if new_c != info['c']:
+                        carrito_usuario[sku]['c'] = new_c
+                        guardar_carrito_db(uid, carrito_usuario)
+                        st.rerun()
+
+                    if c4.button("🗑️", key=f"del_{sku}"):
                         del carrito_usuario[sku]
                         guardar_carrito_db(uid, carrito_usuario)
                         st.rerun()
@@ -258,10 +281,10 @@ else:
             monto_descuento = total_b * porcentaje_desc
             total_n = total_b - monto_descuento
             
-            c1, c2 = st.columns(2)
-            c1.metric("Subtotal", f"${total_b:.2f}")
-            c2.metric("Descuento Aplicado", f"-${monto_descuento:.2f} ({porcentaje_desc*100:.0f}%)")
-            st.write(f"### Total Final: ${total_n:.2f}")
+            c_m1, c_m2 = st.columns(2)
+            c_m1.metric("Subtotal Bruto", f"${total_b:.2f}")
+            c_m2.metric("Descuento Aplicado", f"-${monto_descuento:.2f} ({porcentaje_desc*100:.0f}%)")
+            st.write(f"### Total Final a Pagar: ${total_n:.2f}")
 
             if st.button("Confirmar Pedido ✅", type="primary", use_container_width=True):
                 get_connection().execute(
@@ -352,9 +375,15 @@ else:
                     e_ciu = col1.text_input("Ciudad", value=cli.get('ciudad', ''))
                     e_dir = st.text_area("Dirección", value=cli['direccion'])
                     e_not = st.text_area("Notas", value=cli.get('notas', ''))
-                    if st.form_submit_button("💾 Guardar"):
+                    
+                    b_col1, b_col2 = st.columns([1, 1])
+                    if b_col1.form_submit_button("💾 Guardar"):
                         get_connection().execute(
                             "UPDATE usuarios SET nombre=?, password=?, telefono=?, direccion=?, rif=?, ciudad=?, notas=? WHERE username=?",
                             (e_nom, e_pass, e_tlf, e_dir, e_rif, e_ciu, e_not, cli['username'])
                         )
                         get_connection().commit(); st.success("Actualizado"); st.rerun()
+                    
+                    if b_col2.form_submit_button("🗑️ Eliminar"):
+                        get_connection().execute("DELETE FROM usuarios WHERE username=?", (cli['username'],))
+                        get_connection().commit(); st.warning("Eliminado"); st.rerun()
