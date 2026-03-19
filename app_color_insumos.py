@@ -39,7 +39,7 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS pedidos 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)''')
     
-    # --- NUEVA TABLA PARA CARRITO PERSISTENTE ---
+    # --- TABLA PARA CARRITO PERSISTENTE ---
     conn.execute('''CREATE TABLE IF NOT EXISTS carritos 
                  (username TEXT PRIMARY KEY, data TEXT)''')
     
@@ -58,7 +58,7 @@ def init_db():
             try: conn.execute(f"ALTER TABLE pedidos ADD COLUMN {col} {tipo}")
             except: pass
 
-    # Migración Tabla Usuarios (Campos Personalizados)
+    # Migración Tabla Usuarios
     cursor.execute("PRAGMA table_info(usuarios)")
     cols_usuarios = [info[1] for info in cursor.fetchall()]
     nuevas_cols_usuarios = {"rif": "TEXT", "ciudad": "TEXT", "notas": "TEXT"}
@@ -190,23 +190,23 @@ else:
         if busq: df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
         if cat_sel != "Todas": df = df[df['categoria'] == cat_sel]
 
-        # --- DISEÑO DE LISTA COMPACTA (ESTILO PDF) ---
+        # --- DISEÑO DE LISTA COMPACTA CON INDICADOR ---
         st.divider()
-        # Encabezado de la lista
         h1, h2, h3, h4, h5, h6 = st.columns([0.8, 1.2, 4, 1, 1, 1])
         h1.caption("Imagen")
         h2.caption("SKU")
         h3.caption("Descripción")
         h4.caption("Precio")
         h5.caption("Cant.")
-        h6.caption("Acción")
+        h6.caption("Estado")
         st.divider()
 
         for i, row in df.iterrows():
-            with st.container():
+            en_carrito = row['sku'] in carrito_usuario
+            # Si está en el carrito, usamos un contenedor con borde resaltado
+            with st.container(border=en_carrito):
                 col1, col2, col3, col4, col5, col6 = st.columns([0.8, 1.2, 4, 1, 1, 1])
                 
-                # Imagen pequeña (60px)
                 with col1:
                     if row['foto_path'] and os.path.exists(row['foto_path']):
                         st.image(row['foto_path'], width=60)
@@ -217,17 +217,20 @@ else:
                 col3.write(row['descripcion'])
                 col4.markdown(f"**${row['precio']:.2f}**")
                 
-                # Cantidad inmediata
                 cant = col5.number_input("n", 1, 500, 1, key=f"q_{row['sku']}_{i}", label_visibility="collapsed")
                 
-                # Botón añadir
-                if col6.button("🛒", key=f"btn_{row['sku']}_{i}", help="Añadir al carrito"):
-                    carrito_actual = cargar_carrito_db(uid)
-                    carrito_actual[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
-                    guardar_carrito_db(uid, carrito_actual)
-                    st.toast(f"✅ {row['sku']} añadido")
-                    time.sleep(0.5)
-                    st.rerun()
+                # Indicador visual en el botón / estado
+                if en_carrito:
+                    if col6.button("✅ En Carrito", key=f"btn_{row['sku']}_{i}", help="Ya está en tu lista"):
+                        st.toast("💡 Ya lo tienes en el carrito")
+                else:
+                    if col6.button("🛒 Añadir", key=f"btn_{row['sku']}_{i}"):
+                        carrito_actual = cargar_carrito_db(uid)
+                        carrito_actual[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
+                        guardar_carrito_db(uid, carrito_actual)
+                        st.toast(f"✅ {row['sku']} añadido")
+                        time.sleep(0.3)
+                        st.rerun()
             st.divider()
 
     elif "🛒" in menu:
