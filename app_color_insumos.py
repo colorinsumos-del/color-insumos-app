@@ -9,6 +9,7 @@ import shutil
 from datetime import datetime
 from io import BytesIO
 from fpdf import FPDF 
+from streamlit_js_eval import streamlit_js_eval
 
 # --- CONFIGURACIÓN DE RUTAS ---
 DB_NAME = "color_insumos_v10.db" 
@@ -20,6 +21,23 @@ os.makedirs(IMG_DIR, exist_ok=True)
 for carpeta in CARPETAS_IMPORTAR: os.makedirs(carpeta, exist_ok=True)
 
 st.set_page_config(page_title="Color Insumos - ERP Maestro", layout="wide")
+
+# --- FUNCIONES DE PERSISTENCIA (NUEVO) ---
+def set_persistent_user(user_data):
+    """Guarda los datos del usuario en el localStorage del navegador."""
+    val = json.dumps(user_data)
+    streamlit_js_eval(js_expressions=f"localStorage.setItem('user_color_insumos', '{val}')", key="set_ls")
+
+def get_persistent_user():
+    """Recupera los datos del usuario del localStorage."""
+    return streamlit_js_eval(js_expressions="localStorage.getItem('user_color_insumos')", key="get_ls")
+
+def logout_persistent():
+    """Elimina la sesión del localStorage y del estado de Streamlit."""
+    streamlit_js_eval(js_expressions="localStorage.removeItem('user_color_insumos')", key="del_ls")
+    st.session_state.auth = False
+    st.session_state.user_data = None
+    st.rerun()
 
 # --- ESTILOS CSS ACTUALIZADOS ---
 st.markdown("""
@@ -113,7 +131,6 @@ def cargar_carrito_db(username):
     return json.loads(res[0]) if res else {}
 
 def generar_pdf_recibo(pedido, conn):
-    # Obtener datos de contacto del cliente para el encabezado
     u_data = conn.execute("SELECT rif, telefono, direccion FROM usuarios WHERE username=?", (pedido['username'],)).fetchone()
     c_rif = u_data[0] if u_data and u_data[0] else "N/A"
     c_tel = u_data[1] if u_data and u_data[1] else "N/A"
@@ -122,7 +139,6 @@ def generar_pdf_recibo(pedido, conn):
     pdf = FPDF()
     pdf.add_page()
     
-    # Encabezado Corporativo
     pdf.set_font("Arial", 'B', 18)
     pdf.cell(190, 10, "COLOR INSUMOS", ln=True, align='C')
     pdf.set_font("Arial", size=10)
@@ -130,7 +146,6 @@ def generar_pdf_recibo(pedido, conn):
     pdf.cell(190, 5, "Web: colorinsumos.com | Contacto: 0412-6901346 / 0412-7757053", ln=True, align='C')
     pdf.ln(10)
     
-    # Información del Pedido
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(190, 8, f" RECIBO DE PEDIDO #{pedido['id']} - {pedido['fecha']}", ln=True, fill=True)
@@ -143,7 +158,6 @@ def generar_pdf_recibo(pedido, conn):
     pdf.multi_cell(190, 7, f" Direccion: {c_dir}")
     pdf.ln(5)
     
-    # Tabla de Productos
     pdf.set_font("Arial", 'B', 10)
     pdf.set_fill_color(220, 220, 220)
     pdf.cell(110, 8, " Descripcion del Articulo", 1, 0, 'L', True)
@@ -155,13 +169,11 @@ def generar_pdf_recibo(pedido, conn):
     items = json.loads(pedido['items'])
     for sku, d in items.items():
         desc_txt = f"{sku} - {d['desc']}"
-        # Truncar descripción si es muy larga para la celda
         pdf.cell(110, 8, f" {desc_txt[:55]}", 1)
         pdf.cell(20, 8, str(d['c']), 1, 0, 'C')
         pdf.cell(30, 8, f" ${d['p']:.2f}", 1, 0, 'R')
         pdf.cell(30, 8, f" ${(d['p']*d['c']):.2f}", 1, 1, 'R')
     
-    # Totales
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(130, 8, "", 0, 0)
@@ -192,7 +204,17 @@ def vincular_imagenes_locales():
 
 # --- INICIO APLICACIÓN ---
 init_db()
-if 'auth' not in st.session_state: st.session_state.auth = False
+
+# Lógica de Recuperación de Sesión al refrescar
+if 'auth' not in st.session_state:
+    st.session_state.auth = False
+    ls_user = get_persistent_user()
+    if ls_user:
+        try:
+            st.session_state.user_data = json.loads(ls_user)
+            st.session_state.auth = True
+        except:
+            pass
 
 if not st.session_state.auth:
     st.title("🔐 Acceso Color Insumos")
@@ -203,6 +225,8 @@ if not st.session_state.auth:
         if res:
             st.session_state.auth = True
             st.session_state.user_data = {"user": res[0], "nombre": res[2], "rol": res[3]}
+            # Guardar en navegador
+            set_persistent_user(st.session_state.user_data)
             st.rerun()
         else: st.error("Credenciales incorrectas")
 else:
@@ -237,8 +261,7 @@ else:
             """, unsafe_allow_html=True)
             
         if st.button("Cerrar Sesión"): 
-            st.session_state.auth = False
-            st.rerun()
+            logout_persistent()
 
     # --- MÓDULO TIENDA ---
     if menu == "🛍️ Tienda":
@@ -332,7 +355,7 @@ else:
                 st.success("¡Pedido registrado con éxito!")
                 st.balloons()
 
-    # --- MÓDULO MIS PEDIDOS (REDISENO PROFESIONAL) ---
+    # --- MÓDULO MIS PEDIDOS ---
     elif menu == "📜 Mis Pedidos":
         st.title("📜 Historial de Pedidos")
         query = "SELECT * FROM pedidos ORDER BY id DESC" if user['rol'] == 'admin' else f"SELECT * FROM pedidos WHERE username='{uid}' ORDER BY id DESC"
@@ -350,7 +373,6 @@ else:
                     c3.markdown(f"**Cliente:** {p_row['cliente_nombre']}")
                     
                     st.markdown("---")
-                    # Mostrar tabla de artículos de forma limpia
                     items_dict = json.loads(p_row['items'])
                     tabla_lista = []
                     for sku, d in items_dict.items():
@@ -368,7 +390,6 @@ else:
                         st.markdown(f"**Descuento:** -${p_row['descuento']:.2f}")
                         st.markdown(f"### Total: ${p_row['total']:.2f}")
                     
-                    # Generación y descarga de PDF corregida
                     try:
                         pdf_bytes = generar_pdf_recibo(p_row, conn)
                         st.download_button(
@@ -387,7 +408,7 @@ else:
                             conn.commit()
                             st.rerun()
 
-    # --- ADMINISTRACIÓN (VENTAS, CARGA, FOTOS, USUARIOS) ---
+    # --- ADMINISTRACIÓN ---
     elif menu == "📊 Ventas":
         st.title("📊 Control Administrativo de Ventas")
         df_ventas = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", conn)
