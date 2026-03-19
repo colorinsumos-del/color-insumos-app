@@ -410,9 +410,92 @@ else:
 
     # --- ADMINISTRACIÓN ---
     elif menu == "📊 Ventas":
-        st.title("📊 Control Administrativo de Ventas")
+        st.title("📊 Panel de Control de Ventas")
+
+        # --- 1. RESUMEN DE MÉTRICAS ---
         df_ventas = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", conn)
-        st.dataframe(df_ventas, use_container_width=True)
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Total Pedidos", len(df_ventas))
+        with c2:
+            total_usd = df_ventas['total'].sum()
+            st.metric("Ventas Totales", f"${total_usd:,.2f}")
+        with c3:
+            pendientes = len(df_ventas[df_ventas['status'] == 'Pendiente'])
+            st.metric("Por Entregar", pendientes, delta_color="inverse")
+
+        st.markdown("---")
+
+        # --- 2. FILTROS DE BÚSQUEDA ---
+        col_f1, col_f2 = st.columns([2, 2])
+        search_cli = col_f1.text_input("🔍 Buscar por Cliente o ID")
+        status_filter = col_f2.selectbox("Filtrar por Estado", ["Todos", "Pendiente", "Pagado", "Entregado", "Anulado"])
+
+        query_v = "SELECT * FROM pedidos WHERE 1=1"
+        params_v = []
+
+        if status_filter != "Todos":
+            query_v += " AND status = ?"
+            params_v.append(status_filter)
+        if search_cli:
+            query_v += " AND (cliente_nombre LIKE ? OR id LIKE ?)"
+            params_v.extend([f"%{search_cli}%", f"%{search_cli}%"])
+        
+        df_filtrado = pd.read_sql(query_v + " ORDER BY id DESC", conn, params=params_v)
+
+        # --- 3. LISTADO DINÁMICO ---
+        if df_filtrado.empty:
+            st.warning("No se encontraron registros.")
+        else:
+            for _, v_row in df_filtrado.iterrows():
+                # Color del estado
+                color = "orange" if v_row['status'] == "Pendiente" else "green" if v_row['status'] == "Entregado" else "blue"
+                
+                with st.container():
+                    # Encabezado del pedido
+                    col_id, col_info, col_status, col_actions = st.columns([1, 4, 2, 2])
+                    
+                    col_id.subheader(f"#{v_row['id']}")
+                    
+                    with col_info:
+                        st.markdown(f"**Cliente:** {v_row['cliente_nombre']} | **Fecha:** {v_row['fecha']}")
+                        st.markdown(f"**Total:** `${v_row['total']:.2f}` | **Pago:** {v_row['metodo_pago']}")
+                    
+                    with col_status:
+                        # Selector para cambiar el estado en tiempo real
+                        nuevo_estado = st.selectbox(
+                            "Estado", 
+                            ["Pendiente", "Pagado", "Entregado", "Anulado"], 
+                            index=["Pendiente", "Pagado", "Entregado", "Anulado"].index(v_row['status']),
+                            key=f"status_{v_row['id']}"
+                        )
+                        if nuevo_estado != v_row['status']:
+                            conn.execute("UPDATE pedidos SET status=? WHERE id=?", (nuevo_estado, v_row['id']))
+                            conn.commit()
+                            st.rerun()
+
+                    with col_actions:
+                        # Botón para descargar el PDF que ya habías programado
+                        try:
+                            pdf_b = generar_pdf_recibo(v_row, conn)
+                            st.download_button("📄 PDF", pdf_b, f"Pedido_{v_row['id']}.pdf", "application/pdf", key=f"dl_{v_row['id']}")
+                        except:
+                            st.error("Error PDF")
+                        
+                        # Botón para borrar (con confirmación implícita por ser admin)
+                        if st.button("🗑️", key=f"del_v_{v_row['id']}"):
+                            conn.execute("DELETE FROM pedidos WHERE id=?", (v_row['id'],))
+                            conn.commit()
+                            st.rerun()
+                
+                # Detalle de productos dentro de un expander para no ocupar espacio
+                with st.expander("Ver detalles del pedido"):
+                    items = json.loads(v_row['items'])
+                    for sku, d in items.items():
+                        st.write(f"- **{d['c']}x** {sku} ({d['desc']}) - ${d['p']:.2f} c/u")
+                
+                st.markdown("<hr style='margin:10px 0; border-color:#eee'>", unsafe_allow_html=True)
 
     elif menu == "📁 Carga":
         st.title("📁 Carga masiva de Catálogo")
