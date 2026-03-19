@@ -54,19 +54,18 @@ def cargar_carrito_db(username):
 
 def limpiar_precio(texto):
     if not texto or str(texto).lower() == "none": return 0.0
+    # Limpieza para el formato del PDF de Pointer
     clean = re.sub(r'[^\d,.]', '', str(texto)).replace(',', '.')
     try:
-        if clean.count('.') > 1:
-            parts = clean.split('.')
-            clean = "".join(parts[:-1]) + "." + parts[-1]
         return float(clean)
-    except: return 0.0
+    except:
+        return 0.0
 
 @st.cache_data(ttl=60)
 def cargar_catalogo():
     return pd.read_sql("SELECT * FROM productos", get_connection())
 
-# --- FLUJO DE AUTENTICACIÓN ---
+# --- INICIO DE SISTEMA ---
 init_db()
 if 'auth' not in st.session_state: st.session_state.auth = False
 
@@ -86,21 +85,25 @@ else:
     uid = user['user']
     carrito_usuario = cargar_carrito_db(uid)
 
+    # Cálculo de totales para el Sidebar
     subtotal_live = sum(item['p'] * item['c'] for item in carrito_usuario.values())
     desc_live = subtotal_live * 0.10 if subtotal_live > 100 else 0.0
     total_live = subtotal_live - desc_live
 
     with st.sidebar:
         st.header(f"👤 {user['nombre']}")
-        with st.container(border=True):
-            st.subheader("📊 Totales en Vivo")
-            st.write(f"Productos: {len(carrito_usuario)}")
-            st.write(f"Total: **${total_live:.2f}**")
+        st.write(f"Rol: {user['rol'].upper()}")
+        st.divider()
+        st.subheader("🛒 Resumen")
+        st.write(f"Items: {len(carrito_usuario)}")
+        st.write(f"Total: **${total_live:.2f}**")
         
         opc = ["🛍️ Tienda", f"🛒 Carrito ({len(carrito_usuario)})", "📜 Mis Pedidos"]
-        if user['rol'] == 'admin': opc += ["📊 Gestión Ventas", "📁 Cargar PDF", "👥 Usuarios"]
-        menu = st.radio("Menú", opc)
-        if st.button("Salir"): 
+        if user['rol'] == 'admin': 
+            opc += ["📊 Gestión Ventas", "📁 Cargar PDF", "👥 Usuarios"]
+        
+        menu = st.radio("Menú Principal", opc)
+        if st.button("Cerrar Sesión"): 
             st.session_state.auth = False
             st.rerun()
 
@@ -109,83 +112,71 @@ else:
         st.title("🛍️ Catálogo de Productos")
         df = cargar_catalogo()
         busq = st.text_input("🔍 Buscar por SKU o Descripción...")
-        if busq: df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
+        if busq: 
+            df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
 
         for i, row in df.iterrows():
             item_carrito = carrito_usuario.get(row['sku'])
             with st.container(border=(item_carrito is not None)):
-                c1, c2, c3, c4, c5, c6 = st.columns([0.8, 1.2, 4, 1, 1.2, 1])
+                c1, c2, c3, c4, c5, c6 = st.columns([1, 1.5, 4, 1, 1, 1])
                 with c1:
-                    try:
-                        if row['foto_path'] and os.path.exists(row['foto_path']):
-                            img_valida = Image.open(row['foto_path'])
-                            st.image(img_valida, width=70)
-                        else: st.image("https://via.placeholder.com/70?text=📦", width=70)
-                    except: st.image("https://via.placeholder.com/70?text=Err", width=70)
+                    if row['foto_path'] and os.path.exists(row['foto_path']):
+                        st.image(row['foto_path'], width=80)
+                    else: st.image("https://via.placeholder.com/80?text=📦", width=80)
                 
                 c2.markdown(f"**{row['sku']}**")
                 c3.write(row['descripcion'])
                 c4.markdown(f"**${row['precio']:.2f}**")
-                cant = c5.number_input("n", 1, 500, int(item_carrito['c']) if item_carrito else 1, key=f"q_{row['sku']}", label_visibility="collapsed")
+                
+                cant = c5.number_input("Cant", 1, 1000, int(item_carrito['c']) if item_carrito else 1, key=f"q_{row['sku']}", label_visibility="collapsed")
                 
                 if item_carrito:
-                    if cant != item_carrito['c']:
-                        carrito_usuario[row['sku']]['c'] = cant
-                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
                     if c6.button("🗑️", key=f"del_{row['sku']}"):
-                        del carrito_usuario[row['sku']]; guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                        del carrito_usuario[row['sku']]
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
                 else:
                     if c6.button("🛒", key=f"add_{row['sku']}"):
                         carrito_usuario[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
 
-    # --- MÓDULO CARRITO ---
-    elif "🛒" in menu:
-        st.title("🛒 Confirmar Pedido")
-        if not carrito_usuario: st.info("Tu carrito está vacío")
-        else:
-            for sku, info in list(carrito_usuario.items()):
-                with st.container(border=True):
-                    col1, col2, col3 = st.columns([4, 1, 1])
-                    col1.write(f"**{sku}** - {info['desc']}")
-                    col2.write(f"${info['p']:.2f} x {info['c']}")
-                    if col3.button("Eliminar", key=f"rcart_{sku}"):
-                        del carrito_usuario[sku]; guardar_carrito_db(uid, carrito_usuario); st.rerun()
-            
-            st.divider()
-            metodo = st.selectbox("Método de Pago", ["Zelle / Divisas", "Transferencia BS (BCV)"])
-            if st.button("Finalizar Compra ✅", type="primary", use_container_width=True):
-                get_connection().execute(
-                    "INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(list(carrito_usuario.values())), metodo, subtotal_live, desc_live, total_live, "Pendiente")
-                )
-                guardar_carrito_db(uid, {}); get_connection().commit(); st.success("¡Pedido enviado!"); time.sleep(1); st.rerun()
-
-    # --- MÓDULO CARGAR PDF (CON EXTRACCIÓN DE IMÁGENES) ---
+    # --- MÓDULO CARGAR PDF (BASADO EN CELDAS) ---
     elif menu == "📁 Cargar PDF":
-        st.title("📁 Importar Inventario e Imágenes")
-        f = st.file_uploader("Subir PDF de Pointer", type="pdf")
-        if f and st.button("Procesar Inventario"):
-            with st.status("Leyendo PDF y extrayendo fotos...") as status:
+        st.title("📁 Importar Inventario (Pointer)")
+        f = st.file_uploader("Subir PDF de Lista de Precios", type="pdf")
+        
+        if f and st.button("Procesar Celdas del PDF"):
+            with st.status("Leyendo celdas y fotos...") as status:
                 doc = fitz.open(stream=f.read(), filetype="pdf")
                 conn = get_connection()
+                
                 for page in doc:
                     tabs = page.find_tables()
                     if tabs:
                         for tab in tabs:
                             df_tab = tab.to_pandas()
-                            for row in df_tab.itertuples():
+                            # Pointer PDF: Col 0=SKU, Col 1=Imagen, Col 2=Desc, Col 3=Precio Divisa
+                            for row_idx, row in df_tab.iterrows():
                                 try:
-                                    sku, desc, precio = str(row[1]).strip(), str(row[3]).strip(), limpiar_precio(row[5])
-                                    if len(sku) > 3:
+                                    sku = str(row.iloc[0]).strip()
+                                    desc = str(row.iloc[2]).strip()
+                                    precio = limpiar_precio(row.iloc[3])
+                                    
+                                    if len(sku) > 2 and precio > 0:
                                         foto_path = ""
-                                        celda_img = tab.rows[row.Index].cells[1]
-                                        if celda_img:
-                                            for img in page.get_image_info(hashes=True):
-                                                if fitz.Rect(img['bbox']).intersects(celda_img):
-                                                    pix = fitz.Pixmap(doc, img['xref'])
-                                                    path = os.path.join(IMG_DIR, f"{sku}.png")
-                                                    pix.save(path); foto_path = path; break
+                                        # Extraer imagen de la celda específica (Columna 1)
+                                        celda_img = tab.rows[row_idx].cells[1]
+                                        rect_celda = fitz.Rect(celda_img)
+                                        
+                                        for img_info in page.get_image_info(hashes=True):
+                                            if rect_celda.intersects(fitz.Rect(img_info['bbox'])):
+                                                pix = fitz.Pixmap(doc, img_info['xref'])
+                                                if pix.n - pix.alpha > 3: pix = fitz.Pixmap(fitz.csRGB, pix)
+                                                
+                                                safe_sku = re.sub(r'[\\/*?:"<>|]', "_", sku)
+                                                p_path = os.path.join(IMG_DIR, f"{safe_sku}.png")
+                                                pix.save(p_path)
+                                                foto_path = p_path
+                                                break
                                         
                                         conn.execute("""INSERT INTO productos (sku, descripcion, precio, categoria, foto_path) 
                                                      VALUES (?,?,?,?,?) ON CONFLICT(sku) 
@@ -193,48 +184,67 @@ else:
                                                      (sku, desc, precio, "General", foto_path))
                                 except: continue
                 conn.commit()
-                status.update(label="¡Listo!", state="complete")
+                status.update(label="¡Inventario actualizado!", state="complete")
             st.rerun()
 
-    # --- MÓDULO USUARIOS (GESTIÓN COMPLETA) ---
+    # --- MÓDULO USUARIOS (COMPLETO) ---
     elif menu == "👥 Usuarios":
-        st.title("👥 Administración de Usuarios")
-        t1, t2 = st.tabs(["Lista de Usuarios", "➕ Nuevo"])
+        st.title("👥 Gestión de Clientes y Equipo")
+        t1, t2 = st.tabs(["Lista de Usuarios", "➕ Crear Nuevo"])
+        
         with t1:
+            bus_cli = st.text_input("Buscar por nombre, RIF o ciudad...")
             df_u = pd.read_sql("SELECT * FROM usuarios", get_connection())
-            for _, u_row in df_u.iterrows():
-                with st.expander(f"👤 {u_row['nombre']} ({u_row['username']})"):
-                    with st.form(f"edit_{u_row['username']}"):
-                        c1, c2 = st.columns(2)
-                        en = c1.text_input("Nombre", value=u_row['nombre'])
-                        ec = c2.text_input("Clave", value=u_row['password'])
-                        er = c1.selectbox("Rol", ["admin", "cliente"], index=0 if u_row['rol']=="admin" else 1)
-                        if st.form_submit_button("Guardar"):
-                            get_connection().execute("UPDATE usuarios SET nombre=?, password=?, rol=? WHERE username=?", (en, ec, er, u_row['username']))
+            if bus_cli:
+                df_u = df_u[df_u['nombre'].str.contains(bus_cli, case=False, na=False)]
+            
+            for _, cli in df_u.iterrows():
+                with st.expander(f"👤 {cli['nombre']} | {cli['rol'].upper()}"):
+                    with st.form(key=f"ed_u_{cli['username']}"):
+                        col1, col2 = st.columns(2)
+                        en = col1.text_input("Nombre", value=cli['nombre'])
+                        erif = col2.text_input("RIF", value=cli.get('rif', ''))
+                        ep = col1.text_input("Clave", value=cli['password'])
+                        et = col2.text_input("Teléfono", value=cli['telefono'])
+                        ec = col1.text_input("Ciudad", value=cli.get('ciudad', ''))
+                        ed = st.text_area("Dirección", value=cli['direccion'])
+                        ero = st.selectbox("Rol", ["cliente", "admin"], index=0 if cli['rol']=='cliente' else 1)
+                        
+                        b1, b2 = st.columns(2)
+                        if b1.form_submit_button("💾 Guardar"):
+                            get_connection().execute(
+                                "UPDATE usuarios SET nombre=?, password=?, telefono=?, direccion=?, rif=?, ciudad=?, rol=? WHERE username=?",
+                                (en, ep, et, ed, erif, ec, ero, cli['username'])
+                            )
+                            get_connection().commit(); st.success("Actualizado"); st.rerun()
+                        if b2.form_submit_button("🗑️ Eliminar"):
+                            get_connection().execute("DELETE FROM usuarios WHERE username=?", (cli['username'],))
                             get_connection().commit(); st.rerun()
-                        if st.form_submit_button("Eliminar"):
-                            get_connection().execute("DELETE FROM usuarios WHERE username=?", (u_row['username'],))
-                            get_connection().commit(); st.rerun()
+
         with t2:
             with st.form("nuevo_u"):
-                st.subheader("Registrar Nuevo")
-                nu, np, nn = st.text_input("Usuario"), st.text_input("Clave"), st.text_input("Nombre")
-                nr = st.selectbox("Rol", ["cliente", "admin"])
-                if st.form_submit_button("Crear"):
+                st.subheader("Registrar Nuevo Usuario")
+                c1, c2 = st.columns(2)
+                nu = c1.text_input("Correo/Usuario")
+                np = c2.text_input("Contraseña")
+                nn = c1.text_input("Nombre Completo")
+                nr = c2.selectbox("Rol", ["cliente", "admin"])
+                if st.form_submit_button("🚀 Crear Usuario"):
                     get_connection().execute("INSERT INTO usuarios (username, password, nombre, rol) VALUES (?,?,?,?)", (nu, np, nn, nr))
-                    get_connection().commit(); st.success("Creado"); st.rerun()
+                    get_connection().commit(); st.success("Creado con éxito"); st.rerun()
 
     # --- GESTIÓN VENTAS Y PEDIDOS ---
     elif "Pedidos" in menu or "Ventas" in menu:
-        st.title("📜 Historial")
+        st.title("📜 Historial de Transacciones")
         query = "SELECT * FROM pedidos ORDER BY id DESC" if user['rol'] == 'admin' else f"SELECT * FROM pedidos WHERE username='{uid}'"
         df_p = pd.read_sql(query, get_connection())
+        
         for _, p in df_p.iterrows():
-            with st.expander(f"Pedido #{p['id']} - {p['fecha']} (${p['total']})"):
+            with st.expander(f"Pedido #{p['id']} - {p['fecha']} | Total: ${p['total']:.2f}"):
                 st.write(f"**Cliente:** {p['cliente_nombre']} | **Status:** {p['status']}")
                 st.table(pd.DataFrame(json.loads(p['items'])))
                 if user['rol'] == 'admin':
-                    ns = st.selectbox("Nuevo Estado", ["Pendiente", "Pagado", "Enviado"], key=f"s_{p['id']}")
+                    ns = st.selectbox("Cambiar Estado", ["Pendiente", "Pagado", "Enviado"], key=f"s_{p['id']}")
                     if st.button("Actualizar", key=f"b_{p['id']}"):
                         get_connection().execute("UPDATE pedidos SET status=? WHERE id=?", (ns, p['id']))
                         get_connection().commit(); st.rerun()
