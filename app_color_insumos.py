@@ -171,7 +171,8 @@ def generar_pdf_recibo(pedido, conn):
     pdf.cell(30, 8, "TOTAL FINAL:", 1, 0, 'R', True)
     pdf.cell(30, 8, f"${pedido['total']:.2f}", 1, 1, 'R', True)
     
-    return pdf.output(dest='S').encode('latin-1')
+    # CORRECCIÓN: fpdf2 ya genera un bytearray, solo lo aseguramos como bytes para Streamlit
+    return bytes(pdf.output())
 
 def generar_excel_recibo(pedido):
     items = json.loads(pedido['items'])
