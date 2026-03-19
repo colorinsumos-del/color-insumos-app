@@ -21,7 +21,7 @@ for carpeta in CARPETAS_IMPORTAR: os.makedirs(carpeta, exist_ok=True)
 
 st.set_page_config(page_title="Color Insumos - ERP Maestro", layout="wide")
 
-# --- ESTILOS CSS ---
+# --- ESTILOS CSS ACTUALIZADOS ---
 st.markdown("""
     <style>
     .stImage > img {
@@ -37,6 +37,11 @@ st.markdown("""
         border: 1px solid #e0e0e0;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         margin-bottom: 20px;
+        color: #000000 !important; /* Forzar texto negro */
+    }
+    .floating-totalizer p, .floating-totalizer b {
+        color: #000000 !important; /* Asegurar que párrafos y negritas sean negros */
+        margin: 0;
     }
     .sku-text { font-weight: bold; color: #1f77b4; margin-bottom: 0; font-size: 0.85rem; }
     .desc-text { font-size: 0.8rem; color: #444; margin-bottom: 0; line-height: 1.1; }
