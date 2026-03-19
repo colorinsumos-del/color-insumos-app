@@ -39,6 +39,10 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS pedidos 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, fecha TEXT, items TEXT, total REAL, status TEXT)''')
     
+    # --- NUEVA TABLA PARA CARRITO PERSISTENTE ---
+    conn.execute('''CREATE TABLE IF NOT EXISTS carritos 
+                 (username TEXT PRIMARY KEY, data TEXT)''')
+    
     # --- SISTEMA DE MIGRACIÓN AUTOMÁTICA ---
     cursor = conn.cursor()
     
@@ -67,6 +71,18 @@ def init_db():
     conn.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre, rol, direccion, telefono) VALUES (?,?,?,?,?,?)", 
                  ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin', 'Maracaibo', '04126901346'))
     conn.commit()
+
+# --- FUNCIONES DE PERSISTENCIA DE CARRITO ---
+def guardar_carrito_db(username, carrito_dict):
+    conn = get_connection()
+    data_json = json.dumps(carrito_dict)
+    conn.execute("INSERT OR REPLACE INTO carritos (username, data) VALUES (?, ?)", (username, data_json))
+    conn.commit()
+
+def cargar_carrito_db(username):
+    conn = get_connection()
+    res = conn.execute("SELECT data FROM carritos WHERE username=?", (username,)).fetchone()
+    return json.loads(res[0]) if res else {}
 
 # --- FUNCIONES DE EXPORTACIÓN ---
 def generar_pdf_recibo(pedido, info_cliente):
@@ -147,14 +163,17 @@ def card_producto(row, idx):
         cant = st.number_input("Cantidad", 1, 500, 1, key=f"q_{row['sku']}_{idx}")
         if st.button("🛒 Añadir", key=f"btn_{row['sku']}_{idx}", use_container_width=True):
             uid = st.session_state.user_data['user']
-            if uid not in st.session_state.carritos: st.session_state.carritos[uid] = {}
-            st.session_state.carritos[uid][row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
-            st.toast("✅ Añadido")
+            # Cargar actual, modificar y guardar en DB
+            carrito_actual = cargar_carrito_db(uid)
+            carrito_actual[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
+            guardar_carrito_db(uid, carrito_actual)
+            st.toast("✅ Añadido y Guardado")
+            time.sleep(0.5)
+            st.rerun()
 
 # --- FLUJO PRINCIPAL ---
 init_db()
 if 'auth' not in st.session_state: st.session_state.auth = False
-if 'carritos' not in st.session_state: st.session_state.carritos = {}
 
 if not st.session_state.auth:
     st.title("🔐 Acceso Color Insumos")
@@ -170,11 +189,13 @@ if not st.session_state.auth:
 else:
     user = st.session_state.user_data
     uid = user['user']
-    if uid not in st.session_state.carritos: st.session_state.carritos[uid] = {}
+    
+    # Sincronizar carrito desde DB al iniciar sesión o refrescar
+    carrito_usuario = cargar_carrito_db(uid)
 
     with st.sidebar:
         st.header(f"👤 {user['nombre']}")
-        opc = ["🛍️ Tienda", f"🛒 Carrito ({len(st.session_state.carritos[uid])})", "📜 Mis Pedidos"]
+        opc = ["🛍️ Tienda", f"🛒 Carrito ({len(carrito_usuario)})", "📜 Mis Pedidos"]
         if user['rol'] == 'admin': opc += ["📊 Gestión Ventas", "📁 Cargar PDF", "👥 Clientes"]
         menu = st.radio("Menú", opc)
         if st.button("Salir"): 
@@ -198,12 +219,11 @@ else:
 
     elif "🛒" in menu:
         st.title("🛒 Carrito de Compras")
-        carrito = st.session_state.carritos[uid]
-        if not carrito: st.warning("Carrito vacío")
+        if not carrito_usuario: st.warning("Carrito vacío")
         else:
             total_b = 0
             items_p = []
-            for sku, info in list(carrito.items()):
+            for sku, info in list(carrito_usuario.items()):
                 monto = info['p'] * info['c']
                 total_b += monto
                 with st.container(border=True):
@@ -211,7 +231,9 @@ else:
                     c1.write(f"**{sku}** - {info['desc']}")
                     c2.write(f"{info['c']} x ${info['p']:.2f} = ${monto:.2f}")
                     if c3.button("🗑️", key=f"del_{sku}"):
-                        del st.session_state.carritos[uid][sku]; st.rerun()
+                        del carrito_usuario[sku]
+                        guardar_carrito_db(uid, carrito_usuario)
+                        st.rerun()
                 items_p.append({"sku": sku, "desc": info['desc'], "cant": info['c'], "precio": info['p']})
 
             st.divider()
@@ -230,8 +252,10 @@ else:
                     "INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) VALUES (?,?,?,?,?,?,?,?,?)",
                     (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(items_p), metodo, total_b, monto_descuento, total_n, "Pendiente")
                 )
+                # Al confirmar, vaciamos el carrito en la DB
+                guardar_carrito_db(uid, {})
                 get_connection().commit()
-                st.session_state.carritos[uid] = {}; st.success("Pedido enviado!"); time.sleep(1); st.rerun()
+                st.success("Pedido enviado!"); time.sleep(1); st.rerun()
 
     elif "Pedidos" in menu or "Ventas" in menu:
         st.title("📜 Historial de Pedidos")
