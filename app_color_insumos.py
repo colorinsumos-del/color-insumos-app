@@ -315,22 +315,17 @@ else:
                 st.balloons()
 
     # --- GESTIÓN ---
-    elif menu == "📊 Ventas":
-        st.title("📊 Control de Pedidos")
-        df_p = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", get_connection())
-        st.dataframe(df_p)
-
     elif menu == "📁 Carga":
         st.title("📁 Importar Catálogo PDF")
+        
+        # --- BLOQUE CORREGIDO AQUÍ ---
         if st.button("🔄 Re-organizar Inventario Pointer"):
-    conn = get_connection()
-    productos = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
-    for sku, desc in productos:
-        nueva_cat = auto_categorizar(desc)
-        conn.execute("UPDATE productos SET categoria = ? WHERE sku = ?", (nueva_cat, sku))
-    conn.commit()
-    st.success("¡Catálogo Pointer organizado con éxito!")
-    st.rerun()
+            conn = get_connection()
+            productos = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
+            for sku, desc in productos:
+                nueva_cat = auto_categorizar(desc)
+                conn.execute("UPDATE productos SET categoria = ? WHERE sku = ?", (nueva_cat, sku))
+            conn.commi
 
         f = st.file_uploader("Archivo PDF", type="pdf")
         if f and st.button("Procesar"):
