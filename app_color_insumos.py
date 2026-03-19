@@ -69,34 +69,21 @@ def init_db():
                  ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin'))
     conn.commit()
 
-# --- LÓGICA DE CATEGORIZACIÓN POR FUNCIONALIDAD (TÉCNICA) ---
+# --- LÓGICA DE CATEGORIZACIÓN ---
 def auto_categorizar(descripcion):
     desc = descripcion.lower()
-    
-    # 1. Escritura y Trazo (Funcionalidad: Plasmar)
     if any(kw in desc for kw in ["lapiz", "boligrafo", "pluma", "portamina", "marcador", "resaltador", "tiza", "mina"]):
         return "Escritura y Trazo"
-    
-    # 2. Adhesivos y Sujeción (Funcionalidad: Unir/Fijar)
     if any(kw in desc for kw in ["pega", "silicon", "cinta", "adhesivo", "clip", "grapa", "grapadora", "liga", "sujetador"]):
         return "Adhesivos y Sujeción"
-        
-    # 3. Corte y Medición (Funcionalidad: Modificar/Dimensionar)
     if any(kw in desc for kw in ["tijera", "exacto", "cutter", "regla", "escuadra", "compas", "escalimetro"]):
         return "Corte y Medición"
-        
-    # 4. Materiales de Expresión Artística (Funcionalidad: Crear/Colorear)
     if any(kw in desc for kw in ["color", "pintura", "tempera", "acuarela", "pincel", "plastilina", "acrilico", "frio", "lienzo"]):
         return "Expresión Artística"
-
-    # 5. Soportes y Papelería (Funcionalidad: Base de trabajo)
     if any(kw in desc for kw in ["resma", "papel", "cartulina", "foami", "block", "cuaderno", "libreta", "sobre", "carpeta"]):
         return "Soportes y Papelería"
-
-    # 6. Organización y Accesorios (Funcionalidad: Orden/Mantenimiento)
     if any(kw in desc for kw in ["borrador", "sacapunta", "corrector", "funda", "estuche", "morral", "archivo", "etiqueta"]):
         return "Organización y Accesorios"
-            
     return "Misceláneos Pointer"
 
 def limpiar_precio(texto):
@@ -115,30 +102,94 @@ def cargar_carrito_db(username):
     res = conn.execute("SELECT data FROM carritos WHERE username=?", (username,)).fetchone()
     return json.loads(res[0]) if res else {}
 
-def generar_pdf_recibo(pedido):
+# --- GENERACIÓN DE REPORTES PROFESIONALES ---
+def generar_pdf_recibo(pedido, conn):
+    # Extraer datos completos del cliente
+    u_data = conn.execute("SELECT rif, telefono, direccion FROM usuarios WHERE username=?", (pedido['username'],)).fetchone()
+    c_rif = u_data[0] if u_data and u_data[0] else "No registrado"
+    c_tel = u_data[1] if u_data and u_data[1] else "No registrado"
+    c_dir = u_data[2] if u_data and u_data[2] else "No registrada"
+
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(200, 10, f"COLOR INSUMOS - Pedido #{pedido['id']}", ln=True, align='C')
+    
+    # Encabezado Corporativo Color Insumos
+    pdf.set_font("Arial", 'B', 18)
+    pdf.cell(200, 8, "COLOR INSUMOS", ln=True, align='C')
     pdf.set_font("Arial", size=10)
-    pdf.cell(200, 7, f"Cliente: {pedido['cliente_nombre']} | Fecha: {pedido['fecha']}", ln=True)
-    pdf.cell(200, 7, f"Metodo: {pedido['metodo_pago']}", ln=True)
+    pdf.cell(200, 5, "Servicio Técnico y Papelería al Mayor y Detal", ln=True, align='C')
+    pdf.cell(200, 5, "Web: colorinsumos.com | Tel: 0412-6901346 / 0412-7757053", ln=True, align='C')
+    pdf.ln(8)
+    
+    # Datos del Pedido
+    pdf.set_font("Arial", 'B', 12)
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(200, 8, f" RECIBO DE PEDIDO #{pedido['id']} - {pedido['status'].upper()}", ln=True, fill=True)
+    
+    # Datos del Cliente
+    pdf.set_font("Arial", size=10)
+    pdf.cell(100, 6, f" Cliente: {pedido['cliente_nombre']}", ln=False)
+    pdf.cell(100, 6, f" Fecha: {pedido['fecha']}", ln=True)
+    pdf.cell(100, 6, f" RIF/CI: {c_rif}", ln=False)
+    pdf.cell(100, 6, f" Telefono: {c_tel}", ln=True)
+    pdf.cell(200, 6, f" Direccion: {c_dir}", ln=True)
+    pdf.cell(200, 6, f" Metodo de Pago: {pedido['metodo_pago']}", ln=True)
     pdf.ln(5)
+    
+    # Tabla de Artículos
     items = json.loads(pedido['items'])
-    pdf.set_fill_color(230, 230, 230)
-    pdf.cell(80, 8, "Descripcion", 1, 0, 'C', True)
-    pdf.cell(20, 8, "Cant", 1, 0, 'C', True)
-    pdf.cell(40, 8, "Precio", 1, 0, 'C', True)
-    pdf.cell(40, 8, "Total", 1, 1, 'C', True)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.set_fill_color(220, 220, 220)
+    pdf.cell(30, 8, "SKU", 1, 0, 'C', True)
+    pdf.cell(85, 8, "Descripcion", 1, 0, 'C', True)
+    pdf.cell(15, 8, "Cant", 1, 0, 'C', True)
+    pdf.cell(30, 8, "Precio U.", 1, 0, 'C', True)
+    pdf.cell(30, 8, "Subtotal", 1, 1, 'C', True)
+    
+    pdf.set_font("Arial", size=9)
     for sku, d in items.items():
-        pdf.cell(80, 8, f" {sku}", 1)
-        pdf.cell(20, 8, str(d['c']), 1, 0, 'C')
-        pdf.cell(40, 8, f" ${d['p']:.2f}", 1, 0, 'R')
-        pdf.cell(40, 8, f" ${(d['p']*d['c']):.2f}", 1, 1, 'R')
+        desc_corta = d['desc'][:45] + "..." if len(d['desc']) > 45 else d['desc']
+        pdf.cell(30, 8, f" {sku}", 1)
+        pdf.cell(85, 8, f" {desc_corta}", 1)
+        pdf.cell(15, 8, str(d['c']), 1, 0, 'C')
+        pdf.cell(30, 8, f" ${d['p']:.2f}", 1, 0, 'R')
+        pdf.cell(30, 8, f" ${(d['p']*d['c']):.2f}", 1, 1, 'R')
+    
+    # Totalizaciones
     pdf.ln(5)
-    pdf.cell(140, 8, "TOTAL:", 0, 0, 'R')
-    pdf.cell(40, 8, f"${pedido['total']:.2f}", 1, 1, 'R', True)
+    pdf.set_font("Arial", 'B', 11)
+    pdf.cell(130, 8, "", 0, 0)
+    pdf.cell(30, 8, "Subtotal:", 1, 0, 'R')
+    pdf.cell(30, 8, f"${pedido['subtotal']:.2f}", 1, 1, 'R')
+    
+    pdf.cell(130, 8, "", 0, 0)
+    pdf.cell(30, 8, "Descuento:", 1, 0, 'R')
+    pdf.cell(30, 8, f"-${pedido['descuento']:.2f}", 1, 1, 'R')
+    
+    pdf.cell(130, 8, "", 0, 0)
+    pdf.set_fill_color(200, 255, 200)
+    pdf.cell(30, 8, "TOTAL FINAL:", 1, 0, 'R', True)
+    pdf.cell(30, 8, f"${pedido['total']:.2f}", 1, 1, 'R', True)
+    
     return pdf.output(dest='S').encode('latin-1')
+
+def generar_excel_recibo(pedido):
+    items = json.loads(pedido['items'])
+    datos = []
+    for sku, d in items.items():
+        datos.append({
+            "SKU": sku,
+            "Descripción": d['desc'],
+            "Precio Unitario ($)": d['p'],
+            "Cantidad": d['c'],
+            "Subtotal ($)": d['p'] * d['c']
+        })
+    df = pd.DataFrame(datos)
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name=f"Pedido_{pedido['id']}")
+    return output.getvalue()
 
 def vincular_imagenes_locales():
     conn = get_connection()
@@ -309,11 +360,49 @@ else:
                 st.success("Pedido enviado con éxito.")
                 st.balloons()
 
-    # --- ADMINISTRACIÓN ---
+    # --- HISTORIAL Y GESTIÓN DE MIS PEDIDOS ---
+    elif menu == "📜 Mis Pedidos":
+        st.title("📜 Mis Pedidos")
+        st.write("Gestiona, visualiza y descarga los soportes de tus pedidos realizados.")
+        conn = get_connection()
+        df_mis = pd.read_sql("SELECT * FROM pedidos WHERE username=? ORDER BY id DESC", conn, params=(uid,))
+        
+        if df_mis.empty:
+            st.info("Aún no tienes pedidos registrados en el sistema.")
+        else:
+            for _, p_row in df_mis.iterrows():
+                with st.expander(f"📦 Pedido #{p_row['id']} | Fecha: {p_row['fecha']} | Total: ${p_row['total']:.2f}"):
+                    c1, c2 = st.columns(2)
+                    c1.write(f"**Estado:** {p_row['status']}")
+                    c1.write(f"**Método de Pago:** {p_row['metodo_pago']}")
+                    c2.write(f"**Subtotal:** ${p_row['subtotal']:.2f}")
+                    c2.write(f"**Descuento:** -${p_row['descuento']:.2f}")
+                    
+                    st.markdown("**Artículos del pedido:**")
+                    st.json(json.loads(p_row['items']))
+                    
+                    st.divider()
+                    col_pdf, col_xls, col_del = st.columns(3)
+                    
+                    # Generación de reportes
+                    pdf_bytes = generar_pdf_recibo(p_row, conn)
+                    xls_bytes = generar_excel_recibo(p_row)
+                    
+                    col_pdf.download_button("📄 Descargar Recibo PDF", pdf_bytes, f"Recibo_ColorInsumos_P{p_row['id']}.pdf")
+                    col_xls.download_button("📊 Exportar Detalles Excel", xls_bytes, f"Detalle_Pedido_{p_row['id']}.xlsx")
+                    
+                    if col_del.button("🗑️ Eliminar Pedido", key=f"del_mi_p_{p_row['id']}"):
+                        conn.execute("DELETE FROM pedidos WHERE id=?", (p_row['id'],))
+                        conn.commit()
+                        st.success("Pedido eliminado correctamente."); st.rerun()
+
+    # --- ADMINISTRACIÓN DE VENTAS ---
     elif menu == "📊 Ventas":
-        st.title("📊 Control de Pedidos")
-        df_p = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", get_connection())
+        st.title("📊 Control de Ventas General")
+        conn = get_connection()
+        df_p = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", conn)
         st.dataframe(df_p)
+        # Opcional: Podrías añadir la exportación general aquí también en el futuro.
 
     elif menu == "📁 Carga":
         st.title("📁 Gestión de Catálogo")
@@ -350,7 +439,74 @@ else:
             n = vincular_imagenes_locales()
             st.success(f"Se vincularon {n} imágenes.")
 
+    # --- ADMINISTRACIÓN DE USUARIOS (CRUD COMPLETO) ---
     elif menu == "👥 Usuarios":
-        st.title("👥 Gestión de Usuarios")
-        df_u = pd.read_sql("SELECT username, nombre, rol, telefono FROM usuarios", get_connection())
-        st.table(df_u)
+        st.title("👥 Gestión de Clientes y Usuarios")
+        t_lista, t_nuevo = st.tabs(["📋 Directorio y Edición", "➕ Registrar Nuevo Cliente"])
+        conn = get_connection()
+        
+        with t_lista:
+            df_u = pd.read_sql("SELECT * FROM usuarios", conn)
+            st.write("Selecciona un usuario para ver, editar sus detalles o eliminarlo de la base de datos.")
+            for _, u_row in df_u.iterrows():
+                with st.expander(f"👤 {u_row['nombre']} | ID: {u_row['username']} | Rol: {u_row['rol'].upper()}"):
+                    with st.form(f"form_edit_{u_row['username']}"):
+                        st.markdown("### Modificar Datos")
+                        c1, c2, c3 = st.columns(3)
+                        n_nom = c1.text_input("Nombre / Razón Social", u_row['nombre'])
+                        n_rif = c2.text_input("RIF / Cédula", u_row['rif'] if u_row['rif'] else "")
+                        n_tel = c3.text_input("Teléfono", u_row['telefono'] if u_row['telefono'] else "")
+                        
+                        c4, c5 = st.columns([2, 1])
+                        n_dir = c4.text_input("Dirección de Despacho", u_row['direccion'] if u_row['direccion'] else "")
+                        n_ciu = c5.text_input("Ciudad", u_row['ciudad'] if u_row['ciudad'] else "")
+                        
+                        c6, c7 = st.columns([2, 1])
+                        n_not = c6.text_area("Notas Especiales (Descuentos, horarios, etc.)", u_row['notas'] if u_row['notas'] else "")
+                        n_rol = c7.selectbox("Nivel de Acceso", ["cliente", "admin"], index=0 if u_row['rol']=="cliente" else 1)
+                        
+                        col_btn1, col_btn2 = st.columns([1, 1])
+                        if col_btn1.form_submit_button("💾 Guardar Cambios", use_container_width=True):
+                            conn.execute("UPDATE usuarios SET nombre=?, rif=?, telefono=?, direccion=?, ciudad=?, notas=?, rol=? WHERE username=?", 
+                                         (n_nom, n_rif, n_tel, n_dir, n_ciu, n_not, n_rol, u_row['username']))
+                            conn.commit()
+                            st.success("Perfil actualizado con éxito."); st.rerun()
+                    
+                    if u_row['username'] != 'colorinsumos@gmail.com':
+                        if st.button("❌ Eliminar Permanentemente", key=f"del_user_{u_row['username']}"):
+                            conn.execute("DELETE FROM usuarios WHERE username=?", (u_row['username'],))
+                            conn.commit()
+                            st.warning("Cliente eliminado."); st.rerun()
+
+        with t_nuevo:
+            with st.form("form_crear_usuario"):
+                st.markdown("### Datos del Nuevo Cliente")
+                c1, c2 = st.columns(2)
+                nu_usr = c1.text_input("Correo / ID de Usuario *")
+                nu_pwd = c2.text_input("Contraseña de Acceso *", type="password")
+                
+                c3, c4, c5 = st.columns([2, 1, 1])
+                nu_nom = c3.text_input("Nombre Completo o Empresa *")
+                nu_rif = c4.text_input("RIF / CI")
+                nu_tel = c5.text_input("Teléfono")
+                
+                c6, c7 = st.columns([3, 1])
+                nu_dir = c6.text_input("Dirección Exacta")
+                nu_ciu = c7.text_input("Ciudad")
+                
+                nu_not = st.text_area("Notas u Observaciones del Cliente")
+                nu_rol = st.selectbox("Asignar Rol", ["cliente", "admin"])
+                
+                st.markdown("*Campos obligatorios*")
+                if st.form_submit_button("✅ Registrar en el Sistema", type="primary"):
+                    if nu_usr and nu_pwd and nu_nom:
+                        try:
+                            conn.execute("INSERT INTO usuarios (username, password, nombre, rol, direccion, telefono, rif, ciudad, notas) VALUES (?,?,?,?,?,?,?,?,?)",
+                                         (nu_usr, nu_pwd, nu_nom, nu_rol, nu_dir, nu_tel, nu_rif, nu_ciu, nu_not))
+                            conn.commit()
+                            st.success(f"El cliente {nu_nom} ha sido registrado correctamente.")
+                            st.rerun()
+                        except sqlite3.IntegrityError:
+                            st.error("Error: Ese ID de usuario o correo ya está en uso.")
+                    else:
+                        st.warning("Por favor, completa los campos marcados con asterisco (*).")
