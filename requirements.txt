@@ -5,3 +5,4 @@ pandas
 openpyxl
 fpdf2
 reportlab
+streamlit-js-eval
