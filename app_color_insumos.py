@@ -7,7 +7,7 @@ import json
 import re
 import shutil
 from datetime import datetime
-from resentment import BytesIO
+from io import BytesIO
 from fpdf import FPDF 
 
 # --- CONFIGURACIÓN DE RUTAS ---
@@ -69,19 +69,19 @@ def init_db():
                  ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin'))
     conn.commit()
 
-# --- NUEVA LÓGICA DE CATEGORIZACIÓN POR FUNCIONALIDAD ---
+# --- LÓGICA DE CATEGORIZACIÓN POR FUNCIONALIDAD (TÉCNICA) ---
 def auto_categorizar(descripcion):
     desc = descripcion.lower()
     
-    # 1. Instrumentos de Escritura y Trazo (Funcionalidad: Plasmar/Escribir)
+    # 1. Escritura y Trazo (Funcionalidad: Plasmar)
     if any(kw in desc for kw in ["lapiz", "boligrafo", "pluma", "portamina", "marcador", "resaltador", "tiza", "mina"]):
         return "Escritura y Trazo"
     
-    # 2. Adhesivos y Sujeción (Funcionalidad: Unir/Pegar/Sujetar)
+    # 2. Adhesivos y Sujeción (Funcionalidad: Unir/Fijar)
     if any(kw in desc for kw in ["pega", "silicon", "cinta", "adhesivo", "clip", "grapa", "grapadora", "liga", "sujetador"]):
         return "Adhesivos y Sujeción"
         
-    # 3. Corte y Medición (Funcionalidad: Modificar/Medir)
+    # 3. Corte y Medición (Funcionalidad: Modificar/Dimensionar)
     if any(kw in desc for kw in ["tijera", "exacto", "cutter", "regla", "escuadra", "compas", "escalimetro"]):
         return "Corte y Medición"
         
@@ -89,11 +89,11 @@ def auto_categorizar(descripcion):
     if any(kw in desc for kw in ["color", "pintura", "tempera", "acuarela", "pincel", "plastilina", "acrilico", "frio", "lienzo"]):
         return "Expresión Artística"
 
-    # 5. Soportes y Papelería (Funcionalidad: Superficies de Trabajo)
+    # 5. Soportes y Papelería (Funcionalidad: Base de trabajo)
     if any(kw in desc for kw in ["resma", "papel", "cartulina", "foami", "block", "cuaderno", "libreta", "sobre", "carpeta"]):
         return "Soportes y Papelería"
 
-    # 6. Organización y Consumibles (Funcionalidad: Orden/Mantenimiento)
+    # 6. Organización y Accesorios (Funcionalidad: Orden/Mantenimiento)
     if any(kw in desc for kw in ["borrador", "sacapunta", "corrector", "funda", "estuche", "morral", "archivo", "etiqueta"]):
         return "Organización y Accesorios"
             
@@ -213,10 +213,10 @@ else:
 
     # --- MÓDULO TIENDA ---
     if menu == "🛍️ Tienda":
-        st.title("🛍️ Catálogo por Funcionalidad")
+        st.title("🛍️ Catálogo Pointer por Funcionalidad")
         
         c1, c2, c3 = st.columns([3, 2, 1])
-        busq = c1.text_input("🔍 Buscar en Pointer (SKU o descripción)", key="tienda_search")
+        busq = c1.text_input("🔍 Buscar (SKU o descripción)", key="tienda_search")
         df_cats = pd.read_sql("SELECT DISTINCT categoria FROM productos", get_connection())
         cat_sel = c2.selectbox("📂 Filtrar por Tipo de Artículo", ["Todos"] + df_cats['categoria'].tolist())
         if c3.button("✖️ Reset", use_container_width=True): st.rerun()
@@ -229,7 +229,7 @@ else:
         df = pd.read_sql(query, get_connection(), params=params)
 
         if df.empty:
-            st.info("No hay productos con estos criterios.")
+            st.info("No se encontraron productos.")
         else:
             items_pag = 20
             total_p = (len(df) // items_pag) + (1 if len(df) % items_pag > 0 else 0)
@@ -244,6 +244,8 @@ else:
                 with r2:
                     st.markdown(f'<p class="sku-text">{row.sku} <span style="color:#888; font-weight:normal">| {row.categoria}</span></p>', unsafe_allow_html=True)
                     st.markdown(f'<p class="desc-text">{row.descripcion}</p>', unsafe_allow_html=True)
+                    if row.sku in carrito_usuario:
+                        st.markdown('<span class="in-cart-indicator">✅ En carrito</span>', unsafe_allow_html=True)
                 r3.markdown(f"#### ${row.precio:.2f}")
                 
                 b1, b2, b3, b4 = r4.columns([0.8, 1, 0.8, 1.2])
@@ -278,31 +280,22 @@ else:
                     cr1, cr2, cr3, cr4 = st.columns([4, 2, 2, 1])
                     cr1.write(f"**{sku}**\n{data['desc']}")
                     cr2.write(f"${data['p']:.2f}")
-                    
                     cb1, cb2, cb3 = cr3.columns([1, 1, 1])
                     if cb1.button("➖", key=f"c_m_{sku}"):
-                        if data['c'] > 1:
-                            carrito_usuario[sku]['c'] -= 1
-                        else:
-                            del carrito_usuario[sku]
+                        if data['c'] > 1: carrito_usuario[sku]['c'] -= 1
+                        else: del carrito_usuario[sku]
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
-
                     cb2.write(f"**{data['c']}**")
-
                     if cb3.button("➕", key=f"c_p_{sku}"):
                         carrito_usuario[sku]['c'] += 1
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
-
                     if cr4.button("🗑️", key=f"c_d_{sku}"):
                         del carrito_usuario[sku]
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
                 st.markdown("---")
 
             metodo = st.radio("Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
-            desc = 0.0
-            if metodo == "Divisas / Zelle": desc = subtotal_v * 0.30
-            elif metodo == "Bolívares (BCV)" and subtotal_v >= 100: desc = subtotal_v * 0.10
-            
+            desc = (subtotal_v * 0.30) if metodo == "Divisas / Zelle" else ((subtotal_v * 0.10) if subtotal_v >= 100 else 0)
             total_f = subtotal_v - desc
             st.write(f"Subtotal: ${subtotal_v:.2f} | Descuento: -${desc:.2f}")
             st.header(f"Total Final: ${total_f:.2f}")
@@ -313,25 +306,18 @@ else:
                              (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
                 conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
                 conn.commit()
-                st.success("Pedido enviado.")
+                st.success("Pedido enviado con éxito.")
                 st.balloons()
-
-    # --- HISTORIAL ---
-    elif menu == "📜 Mis Pedidos":
-        st.title("📜 Mis Pedidos")
-        df_mis = pd.read_sql("SELECT id, fecha, total, status FROM pedidos WHERE username=?", get_connection(), params=(uid,))
-        st.dataframe(df_mis, use_container_width=True)
 
     # --- ADMINISTRACIÓN ---
     elif menu == "📊 Ventas":
-        st.title("📊 Control de Ventas")
+        st.title("📊 Control de Pedidos")
         df_p = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", get_connection())
         st.dataframe(df_p)
 
     elif menu == "📁 Carga":
         st.title("📁 Gestión de Catálogo")
         
-        # 1. Botón de Recategorización Técnica
         if st.button("🔄 Aplicar Categorización Técnica Pointer"):
             conn = get_connection()
             productos = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
@@ -339,12 +325,11 @@ else:
                 nueva_cat = auto_categorizar(desc)
                 conn.execute("UPDATE productos SET categoria = ? WHERE sku = ?", (nueva_cat, sku))
             conn.commit()
-            st.success("Inventario reclasificado por funcionalidad.")
+            st.success("Inventario reclasificado por funcionalidad técnica.")
             st.rerun()
 
-        # 2. Carga de Catálogo PDF
-        f = st.file_uploader("Cargar PDF de Pointer", type="pdf")
-        if f and st.button("Procesar Archivo"):
+        f = st.file_uploader("Cargar Catálogo PDF Pointer", type="pdf")
+        if f and st.button("Procesar Inventario"):
             doc = fitz.open(stream=f.read(), filetype="pdf")
             conn = get_connection()
             for page in doc:
@@ -354,17 +339,16 @@ else:
                             sku, desc = str(r.iloc[0]).strip(), str(r.iloc[2]).strip()
                             pre = limpiar_precio(r.iloc[4])
                             if len(sku) > 2:
-                                cat = auto_categorizar(desc)
-                                conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, categoria=excluded.categoria", (sku, desc, pre, cat))
+                                conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, categoria=excluded.categoria", (sku, desc, pre, auto_categorizar(desc)))
                         except: continue
             conn.commit()
-            st.success("Catálogo actualizado.")
+            st.success("Catálogo cargado y categorizado.")
 
     elif menu == "🖼️ Fotos":
         st.title("🖼️ Vinculación de Fotos")
-        if st.button("Iniciar Sincronización"):
+        if st.button("Sincronizar Galería Local"):
             n = vincular_imagenes_locales()
-            st.success(f"Se vincularon {n} imágenes al inventario.")
+            st.success(f"Se vincularon {n} imágenes.")
 
     elif menu == "👥 Usuarios":
         st.title("👥 Gestión de Usuarios")
