@@ -7,7 +7,7 @@ import json
 import re
 import shutil
 from datetime import datetime
-from io import BytesIO
+from resentment import BytesIO
 from fpdf import FPDF 
 
 # --- CONFIGURACIÓN DE RUTAS ---
@@ -32,7 +32,7 @@ st.markdown("""
     }
     .floating-totalizer {
         background-color: #ffffff;
-        padding: 15 padding: 15px;
+        padding: 15px;
         border-radius: 10px;
         border: 1px solid #e0e0e0;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
@@ -69,27 +69,35 @@ def init_db():
                  ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin'))
     conn.commit()
 
-# --- FUNCIONES DE APOYO ---
+# --- NUEVA LÓGICA DE CATEGORIZACIÓN POR FUNCIONALIDAD ---
 def auto_categorizar(descripcion):
     desc = descripcion.lower()
     
-    # 1. Escritura y Corrección
-    if any(kw in desc for kw in ["lapiz", "boligrafo", "marcador", "resaltador", "corrector", "sacapunta", "borrador", "mina"]):
-        return "Escritura y Corrección"
+    # 1. Instrumentos de Escritura y Trazo (Funcionalidad: Plasmar/Escribir)
+    if any(kw in desc for kw in ["lapiz", "boligrafo", "pluma", "portamina", "marcador", "resaltador", "tiza", "mina"]):
+        return "Escritura y Trazo"
     
-    # 2. Arte y Color
-    if any(kw in desc for kw in ["color", "pintura", "tempera", "acuarela", "pincel", "plastilina", "frio", "acrilico"]):
-        return "Arte y Color"
+    # 2. Adhesivos y Sujeción (Funcionalidad: Unir/Pegar/Sujetar)
+    if any(kw in desc for kw in ["pega", "silicon", "cinta", "adhesivo", "clip", "grapa", "grapadora", "liga", "sujetador"]):
+        return "Adhesivos y Sujeción"
         
-    # 3. Papelería y Oficina
-    if any(kw in desc for kw in ["resma", "clip", "carpeta", "grapadora", "grapa", "liga", "sobre", "cinta", "pega", "silicon"]):
-        return "Papelería y Oficina"
+    # 3. Corte y Medición (Funcionalidad: Modificar/Medir)
+    if any(kw in desc for kw in ["tijera", "exacto", "cutter", "regla", "escuadra", "compas", "escalimetro"]):
+        return "Corte y Medición"
         
-    # 4. Escolar y Didáctico
-    if any(kw in desc for kw in ["cuaderno", "libreta", "morral", "regla", "compas", "tijera", "juego", "didactico", "block"]):
-        return "Escolar y Didáctico"
+    # 4. Materiales de Expresión Artística (Funcionalidad: Crear/Colorear)
+    if any(kw in desc for kw in ["color", "pintura", "tempera", "acuarela", "pincel", "plastilina", "acrilico", "frio", "lienzo"]):
+        return "Expresión Artística"
+
+    # 5. Soportes y Papelería (Funcionalidad: Superficies de Trabajo)
+    if any(kw in desc for kw in ["resma", "papel", "cartulina", "foami", "block", "cuaderno", "libreta", "sobre", "carpeta"]):
+        return "Soportes y Papelería"
+
+    # 6. Organización y Consumibles (Funcionalidad: Orden/Mantenimiento)
+    if any(kw in desc for kw in ["borrador", "sacapunta", "corrector", "funda", "estuche", "morral", "archivo", "etiqueta"]):
+        return "Organización y Accesorios"
             
-    return "Varios Pointer"
+    return "Misceláneos Pointer"
 
 def limpiar_precio(texto):
     if not texto or str(texto).lower() == "none": return 0.0
@@ -174,7 +182,7 @@ else:
     subtotal_v = sum(d['p'] * d['c'] for d in carrito_usuario.values())
     cant_v = sum(d['c'] for d in carrito_usuario.values())
 
-    # --- VENTANA FLOTANTE EN SIDEBAR (DETALLADA) ---
+    # --- VENTANA FLOTANTE EN SIDEBAR ---
     with st.sidebar:
         st.header(f"👤 {user['nombre']}")
         opc = ["🛍️ Tienda", f"🛒 Carrito ({cant_v})", "📜 Mis Pedidos"]
@@ -203,29 +211,29 @@ else:
             st.session_state.auth = False
             st.rerun()
 
-    # --- MÓDULO TIENDA HORIZONTAL ---
+    # --- MÓDULO TIENDA ---
     if menu == "🛍️ Tienda":
-        st.title("🛍️ Catálogo de Productos")
+        st.title("🛍️ Catálogo por Funcionalidad")
         
         c1, c2, c3 = st.columns([3, 2, 1])
-        busq = c1.text_input("🔍 ¿Qué buscas hoy? (SKU o nombre)", key="tienda_search")
+        busq = c1.text_input("🔍 Buscar en Pointer (SKU o descripción)", key="tienda_search")
         df_cats = pd.read_sql("SELECT DISTINCT categoria FROM productos", get_connection())
-        cat_sel = c2.selectbox("📂 Explorar por Segmento", ["Todos los artículos"] + df_cats['categoria'].tolist())
-        if c3.button("✖️ Limpiar Vista", use_container_width=True): st.rerun()
+        cat_sel = c2.selectbox("📂 Filtrar por Tipo de Artículo", ["Todos"] + df_cats['categoria'].tolist())
+        if c3.button("✖️ Reset", use_container_width=True): st.rerun()
 
         query = "SELECT * FROM productos WHERE 1=1"
         params = []
-        if cat_sel != "Todos los artículos": query += " AND categoria = ?"; params.append(cat_sel)
+        if cat_sel != "Todos": query += " AND categoria = ?"; params.append(cat_sel)
         if busq: query += " AND (descripcion LIKE ? OR sku LIKE ?)"; params.extend([f"%{busq}%", f"%{busq}%"])
         
         df = pd.read_sql(query, get_connection(), params=params)
 
         if df.empty:
-            st.info("No se encontraron productos en este segmento.")
+            st.info("No hay productos con estos criterios.")
         else:
             items_pag = 20
             total_p = (len(df) // items_pag) + (1 if len(df) % items_pag > 0 else 0)
-            p_sel = st.number_input(f"Página (Total: {total_p})", 1, total_p, 1)
+            p_sel = st.number_input(f"Página", 1, total_p, 1)
             
             st.markdown("---")
             for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
@@ -236,8 +244,6 @@ else:
                 with r2:
                     st.markdown(f'<p class="sku-text">{row.sku} <span style="color:#888; font-weight:normal">| {row.categoria}</span></p>', unsafe_allow_html=True)
                     st.markdown(f'<p class="desc-text">{row.descripcion}</p>', unsafe_allow_html=True)
-                    if row.sku in carrito_usuario:
-                        st.markdown('<span class="in-cart-indicator">✅ Ya en carrito</span>', unsafe_allow_html=True)
                 r3.markdown(f"#### ${row.precio:.2f}")
                 
                 b1, b2, b3, b4 = r4.columns([0.8, 1, 0.8, 1.2])
@@ -255,7 +261,7 @@ else:
                     else: carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": 1}
                     guardar_carrito_db(uid, carrito_usuario); st.rerun()
                 
-                if b4.button("🗑️", key=f"t_del_{row.sku}", help="Remover"):
+                if b4.button("🗑️", key=f"t_del_{row.sku}"):
                     if row.sku in carrito_usuario:
                         del carrito_usuario[row.sku]
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
@@ -263,37 +269,33 @@ else:
 
     # --- MÓDULO CARRITO ---
     elif menu.startswith("🛒 Carrito"):
-        st.title("🛒 Revisión de Pedido")
+        st.title("🛒 Carrito de Compras")
         if not carrito_usuario:
-            st.info("No has agregado artículos aún.")
+            st.info("El carrito está vacío.")
         else:
             for sku, data in list(carrito_usuario.items()):
                 with st.container():
                     cr1, cr2, cr3, cr4 = st.columns([4, 2, 2, 1])
                     cr1.write(f"**{sku}**\n{data['desc']}")
-                    cr2.write(f"Unitario: ${data['p']:.2f}")
+                    cr2.write(f"${data['p']:.2f}")
                     
                     cb1, cb2, cb3 = cr3.columns([1, 1, 1])
                     if cb1.button("➖", key=f"c_m_{sku}"):
                         if data['c'] > 1:
                             carrito_usuario[sku]['c'] -= 1
-                            guardar_carrito_db(uid, carrito_usuario)
                         else:
                             del carrito_usuario[sku]
-                            guardar_carrito_db(uid, carrito_usuario)
-                        st.rerun()
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
 
                     cb2.write(f"**{data['c']}**")
 
                     if cb3.button("➕", key=f"c_p_{sku}"):
                         carrito_usuario[sku]['c'] += 1
-                        guardar_carrito_db(uid, carrito_usuario)
-                        st.rerun()
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
 
                     if cr4.button("🗑️", key=f"c_d_{sku}"):
                         del carrito_usuario[sku]
-                        guardar_carrito_db(uid, carrito_usuario)
-                        st.rerun()
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
                 st.markdown("---")
 
             metodo = st.radio("Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
@@ -311,32 +313,38 @@ else:
                              (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
                 conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
                 conn.commit()
-                st.success("Pedido registrado exitosamente.")
+                st.success("Pedido enviado.")
                 st.balloons()
 
-    # --- GESTIÓN ---
+    # --- HISTORIAL ---
+    elif menu == "📜 Mis Pedidos":
+        st.title("📜 Mis Pedidos")
+        df_mis = pd.read_sql("SELECT id, fecha, total, status FROM pedidos WHERE username=?", get_connection(), params=(uid,))
+        st.dataframe(df_mis, use_container_width=True)
+
+    # --- ADMINISTRACIÓN ---
     elif menu == "📊 Ventas":
-        st.title("📊 Control de Pedidos")
+        st.title("📊 Control de Ventas")
         df_p = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", get_connection())
         st.dataframe(df_p)
 
     elif menu == "📁 Carga":
-        st.title("📁 Importar Catálogo PDF")
+        st.title("📁 Gestión de Catálogo")
         
-        # 1. Botón de Re-organización
-        if st.button("🔄 Re-organizar Inventario Pointer"):
+        # 1. Botón de Recategorización Técnica
+        if st.button("🔄 Aplicar Categorización Técnica Pointer"):
             conn = get_connection()
             productos = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
             for sku, desc in productos:
                 nueva_cat = auto_categorizar(desc)
                 conn.execute("UPDATE productos SET categoria = ? WHERE sku = ?", (nueva_cat, sku))
             conn.commit()
-            st.success("¡Catálogo Pointer organizado con éxito!")
+            st.success("Inventario reclasificado por funcionalidad.")
             st.rerun()
 
-        # 2. Subida de archivo (PROCESADO ÚNICO)
-        f = st.file_uploader("Archivo PDF Maestro", type="pdf")
-        if f and st.button("Procesar Inventario"):
+        # 2. Carga de Catálogo PDF
+        f = st.file_uploader("Cargar PDF de Pointer", type="pdf")
+        if f and st.button("Procesar Archivo"):
             doc = fitz.open(stream=f.read(), filetype="pdf")
             conn = get_connection()
             for page in doc:
@@ -350,15 +358,15 @@ else:
                                 conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, categoria=excluded.categoria", (sku, desc, pre, cat))
                         except: continue
             conn.commit()
-            st.success("Inventario actualizado y segmentado automáticamente.")
+            st.success("Catálogo actualizado.")
 
     elif menu == "🖼️ Fotos":
-        st.title("🖼️ Sincronización")
-        if st.button("Vincular"):
+        st.title("🖼️ Vinculación de Fotos")
+        if st.button("Iniciar Sincronización"):
             n = vincular_imagenes_locales()
-            st.success(f"Vinculadas {n} fotos.")
+            st.success(f"Se vincularon {n} imágenes al inventario.")
 
     elif menu == "👥 Usuarios":
-        st.title("👥 Usuarios")
-        df_u = pd.read_sql("SELECT * FROM usuarios", get_connection())
+        st.title("👥 Gestión de Usuarios")
+        df_u = pd.read_sql("SELECT username, nombre, rol, telefono FROM usuarios", get_connection())
         st.table(df_u)
