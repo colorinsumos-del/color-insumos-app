@@ -21,33 +21,26 @@ for carpeta in CARPETAS_IMPORTAR: os.makedirs(carpeta, exist_ok=True)
 
 st.set_page_config(page_title="Color Insumos - ERP Maestro", layout="wide")
 
-# --- ESTILOS CSS PARA DISEÑO COMPACTO ---
+# --- ESTILOS CSS ---
 st.markdown("""
     <style>
-    .compact-row {
-        padding: 5px 15px;
-        border-bottom: 1px solid #eee;
-        display: flex;
-        align-items: center;
-    }
     .stImage > img {
         object-fit: cover;
-        height: 60px !important;
-        width: 60px !important;
+        height: 50px !important;
+        width: 50px !important;
         border-radius: 5px;
     }
-    .totalizer-bar {
-        background-color: #f8f9fa;
-        padding: 10px 20px;
-        border-radius: 8px;
-        margin-bottom: 15px;
-        border: 1px solid #dee2e6;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
+    .floating-totalizer {
+        background-color: #ffffff;
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
     }
-    .sku-text { font-weight: bold; color: #1f77b4; margin-bottom: 0; }
-    .desc-text { font-size: 0.9rem; color: #666; margin-bottom: 0; }
+    .sku-text { font-weight: bold; color: #1f77b4; margin-bottom: 0; font-size: 0.85rem; }
+    .desc-text { font-size: 0.8rem; color: #444; margin-bottom: 0; line-height: 1.1; }
+    .in-cart-indicator { color: #28a745; font-weight: bold; font-size: 0.8rem; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -74,9 +67,16 @@ def init_db():
 # --- FUNCIONES DE APOYO ---
 def auto_categorizar(descripcion):
     desc = descripcion.lower()
-    if any(x in desc for x in ['papel', 'lapiz', 'boligrafo', 'cuaderno', 'resma', 'sacapunta']): return "Papelería"
-    if any(x in desc for x in ['tinta', 'toner', 'cartucho', 'ink']): return "Consumibles"
-    if any(x in desc for x in ['impresora', 'pc', 'mouse', 'teclado', 'usb']): return "Tecnología"
+    categorias = {
+        "Oficina": ["clip", "engrapadora", "perforadora", "archivo", "carpeta", "toner", "tinta", "escritorio"],
+        "Escolar": ["cuaderno", "lapiz", "morral", "sacapunta", "regla", "borrador", "escolar", "colores"],
+        "Juegos Didácticos": ["rompecabezas", "lego", "didactico", "juego", "mesa", "puzzle", "educativo"],
+        "Artes Plásticas": ["pincel", "oleo", "acrilico", "bastidor", "lienzo", "arcilla", "tempera", "frio"],
+        "Papelería Creativa": ["cartulina", "escarcha", "foami", "pegatina", "silicon", "glitter", "creativa"]
+    }
+    for cat, keywords in categorias.items():
+        if any(kw in desc for kw in keywords):
+            return cat
     return "Otros"
 
 def limpiar_precio(texto):
@@ -162,28 +162,40 @@ else:
     subtotal_v = sum(d['p'] * d['c'] for d in carrito_usuario.values())
     cant_v = sum(d['c'] for d in carrito_usuario.values())
 
+    # --- VENTANA FLOTANTE EN SIDEBAR (DETALLADA) ---
     with st.sidebar:
         st.header(f"👤 {user['nombre']}")
         opc = ["🛍️ Tienda", f"🛒 Carrito ({cant_v})", "📜 Mis Pedidos"]
         if user['rol'] == 'admin': 
             opc += ["📊 Ventas", "📁 Carga", "🖼️ Fotos", "👥 Usuarios"]
         menu = st.radio("Navegación", opc)
-        st.divider()
-        st.metric("Subtotal Cuenta", f"${subtotal_v:.2f}")
+        
+        st.markdown("### 💳 Resumen de Cuenta")
+        with st.container():
+            st.markdown(f"""
+                <div class="floating-totalizer">
+                    <p style='margin:0'>Items: <b>{cant_v}</b></p>
+                    <p style='margin:0'>Subtotal: <b>${subtotal_v:.2f}</b></p>
+                    <hr style='margin:10px 0'>
+                    <p style='margin:0; font-size:0.8rem; color:#666'>Dcto. Proyectado:</p>
+                    <p style='margin:0; color:#d9534f'>-$ { (subtotal_v * 0.10 if subtotal_v >= 100 else 0):.2f} (BCV)</p>
+                    <p style='margin:0; color:#5cb85c'>-$ { (subtotal_v * 0.30):.2f} (Zelle)</p>
+                </div>
+            """, unsafe_allow_html=True)
+            
         if st.button("Cerrar Sesión"): 
             st.session_state.auth = False
             st.rerun()
 
-    # --- MÓDULO TIENDA HORIZONTAL COMPACTA ---
+    # --- MÓDULO TIENDA HORIZONTAL ---
     if menu == "🛍️ Tienda":
-        st.title("🛍️ Catálogo")
-        st.markdown(f'<div class="totalizer-bar"><span>Artículos: <b>{cant_v}</b></span><span>Total estimado: <b>${subtotal_v:.2f}</b></span></div>', unsafe_allow_html=True)
+        st.title("🛍️ Catálogo de Productos")
         
         c1, c2, c3 = st.columns([3, 2, 1])
-        busq = c1.text_input("🔍 Buscar...", key="tienda_search")
+        busq = c1.text_input("🔍 Buscar SKU o nombre...", key="tienda_search")
         df_cats = pd.read_sql("SELECT DISTINCT categoria FROM productos", get_connection())
-        cat_sel = c2.selectbox("📂 Rubro", ["Todas"] + df_cats['categoria'].tolist())
-        if c3.button("✖️ Limpiar", use_container_width=True): st.rerun()
+        cat_sel = c2.selectbox("📂 Filtrar por Rubro", ["Todas"] + df_cats['categoria'].tolist())
+        if c3.button("✖️ Limpiar Filtros", use_container_width=True): st.rerun()
 
         query = "SELECT * FROM productos WHERE 1=1"
         params = []
@@ -193,33 +205,27 @@ else:
         df = pd.read_sql(query, get_connection(), params=params)
 
         if df.empty:
-            st.info("No hay productos. Intenta con otra búsqueda.")
+            st.info("No se encontraron productos.")
         else:
-            items_pag = 15
+            items_pag = 20
             total_p = (len(df) // items_pag) + (1 if len(df) % items_pag > 0 else 0)
-            p_sel = st.number_input(f"Página (de {total_p})", 1, total_p, 1)
+            p_sel = st.number_input(f"Página (Total: {total_p})", 1, total_p, 1)
             
-            # Encabezado de tabla
             st.markdown("---")
-            h1, h2, h3, h4 = st.columns([1, 4, 1.5, 2])
-            h1.write("**Foto**")
-            h2.write("**Producto / Descripción**")
-            h3.write("**Precio**")
-            h4.write("**Acción**")
-            st.markdown("---")
-
             for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
-                r1, r2, r3, r4 = st.columns([1, 4, 1.5, 2])
+                r1, r2, r3, r4 = st.columns([0.8, 4.5, 1.2, 2.5])
                 with r1:
                     img = row.foto_path if row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/60"
                     st.image(img)
                 with r2:
-                    st.markdown(f'<p class="sku-text">{row.sku}</p>', unsafe_allow_html=True)
-                    st.markdown(f'<p class="desc-text">{row.descripcion[:80]}</p>', unsafe_allow_html=True)
+                    st.markdown(f'<p class="sku-text">{row.sku} <span style="color:#888; font-weight:normal">| {row.categoria}</span></p>', unsafe_allow_html=True)
+                    st.markdown(f'<p class="desc-text">{row.descripcion}</p>', unsafe_allow_html=True)
+                    if row.sku in carrito_usuario:
+                        st.markdown('<span class="in-cart-indicator">✅ En el carrito</span>', unsafe_allow_html=True)
                 r3.markdown(f"#### ${row.precio:.2f}")
                 
-                # Controles compactos
-                b1, b2, b3 = r4.columns([1, 1, 1])
+                # Controles compactos en Tienda
+                b1, b2, b3, b4 = r4.columns([0.8, 1, 0.8, 1.2])
                 if b1.button("➖", key=f"t_m_{row.sku}"):
                     if row.sku in carrito_usuario:
                         if carrito_usuario[row.sku]['c'] > 1: carrito_usuario[row.sku]['c'] -= 1
@@ -233,20 +239,25 @@ else:
                     if row.sku in carrito_usuario: carrito_usuario[row.sku]['c'] += 1
                     else: carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": 1}
                     guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                
+                if b4.button("🗑️", key=f"t_del_{row.sku}", help="Quitar del carrito"):
+                    if row.sku in carrito_usuario:
+                        del carrito_usuario[row.sku]
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                st.markdown("<hr style='margin:5px 0; border-color:#f0f0f0'>", unsafe_allow_html=True)
 
-    # --- MÓDULO CARRITO (CORREGIDO) ---
+    # --- MÓDULO CARRITO ---
     elif menu.startswith("🛒 Carrito"):
-        st.title("🛒 Mi Carrito")
+        st.title("🛒 Revisión de Pedido")
         if not carrito_usuario:
-            st.info("El carrito está vacío.")
+            st.info("No has agregado artículos aún.")
         else:
             for sku, data in list(carrito_usuario.items()):
-                with st.container(border=True):
+                with st.container():
                     cr1, cr2, cr3, cr4 = st.columns([4, 2, 2, 1])
                     cr1.write(f"**{sku}**\n{data['desc']}")
-                    cr2.write(f"Precio: ${data['p']:.2f}")
+                    cr2.write(f"Unitario: ${data['p']:.2f}")
                     
-                    # Controles de edición sin redirección a tienda
                     cb1, cb2, cb3 = cr3.columns([1, 1, 1])
                     if cb1.button("➖", key=f"c_m_{sku}"):
                         if data['c'] > 1:
@@ -255,7 +266,7 @@ else:
                         else:
                             del carrito_usuario[sku]
                             guardar_carrito_db(uid, carrito_usuario)
-                        st.rerun() # Esto refresca la pestaña actual (Carrito)
+                        st.rerun()
 
                     cb2.write(f"**{data['c']}**")
 
@@ -268,41 +279,36 @@ else:
                         del carrito_usuario[sku]
                         guardar_carrito_db(uid, carrito_usuario)
                         st.rerun()
+                st.markdown("---")
 
-            st.divider()
             metodo = st.radio("Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
-            
-            # Reglas de Descuento
             desc = 0.0
             if metodo == "Divisas / Zelle": desc = subtotal_v * 0.30
             elif metodo == "Bolívares (BCV)" and subtotal_v >= 100: desc = subtotal_v * 0.10
             
             total_f = subtotal_v - desc
             st.write(f"Subtotal: ${subtotal_v:.2f} | Descuento: -${desc:.2f}")
-            st.header(f"Total: ${total_f:.2f}")
+            st.header(f"Total Final: ${total_f:.2f}")
             
-            if st.button("🏁 Finalizar y Generar Recibo", type="primary", use_container_width=True):
+            if st.button("🏁 Confirmar Pedido", type="primary", use_container_width=True):
                 conn = get_connection()
                 conn.execute("INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) VALUES (?,?,?,?,?,?,?,?,?)",
                              (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
                 conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
                 conn.commit()
-                st.success("¡Pedido procesado!")
+                st.success("Pedido registrado.")
                 st.balloons()
 
-    # --- OTROS MÓDULOS (MANTENIDOS) ---
+    # --- GESTIÓN (MANTENIDA) ---
     elif menu == "📊 Ventas":
-        st.title("📊 Pedidos")
+        st.title("📊 Control de Pedidos")
         df_p = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", get_connection())
-        for _, p in df_p.iterrows():
-            with st.expander(f"Pedido #{p['id']} - {p['cliente_nombre']}"):
-                st.write(f"Fecha: {p['fecha']} | Total: ${p['total']:.2f}")
-                st.download_button("Descargar PDF", generar_pdf_recibo(p), f"Recibo_{p['id']}.pdf")
+        st.dataframe(df_p)
 
     elif menu == "📁 Carga":
-        st.title("📁 Importar PDF")
-        f = st.file_uploader("Subir PDF", type="pdf")
-        if f and st.button("Extraer"):
+        st.title("📁 Importar Catálogo PDF")
+        f = st.file_uploader("Archivo PDF", type="pdf")
+        if f and st.button("Procesar"):
             doc = fitz.open(stream=f.read(), filetype="pdf")
             conn = get_connection()
             for page in doc:
@@ -311,11 +317,12 @@ else:
                         sku, desc = str(r.iloc[0]).strip(), str(r.iloc[2]).strip()
                         pre = limpiar_precio(r.iloc[4])
                         if len(sku) > 2:
-                            conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, categoria=excluded.categoria", (sku, desc, pre, auto_categorizar(desc)))
-            conn.commit(); st.success("Cargado")
+                            cat = auto_categorizar(desc)
+                            conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, categoria=excluded.categoria", (sku, desc, pre, cat))
+            conn.commit(); st.success("Inventario actualizado")
 
     elif menu == "🖼️ Fotos":
-        st.title("🖼️ Sincronizar Imágenes")
+        st.title("🖼️ Sincronización")
         if st.button("Vincular"):
             n = vincular_imagenes_locales()
             st.success(f"Vinculadas {n} fotos.")
