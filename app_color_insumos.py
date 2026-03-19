@@ -447,15 +447,61 @@ else:
 
     elif menu == "👥 Usuarios":
         st.title("👥 Gestión de Usuarios")
-        df_u = pd.read_sql("SELECT username, nombre, rol, telefono, rif FROM usuarios", conn)
-        st.table(df_u)
+        # Obtenemos todos los campos necesarios de la DB
+        df_u = pd.read_sql("SELECT username, password, nombre, rol, telefono, rif, direccion, ciudad FROM usuarios", conn)
         
+        # --- LISTADO Y EDICIÓN DE USUARIOS ---
+        for i, row in df_u.iterrows():
+            with st.container():
+                c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
+                c1.write(f"**{row['nombre']}** ({row['username']})")
+                c2.write(f"Rol: {row['rol']} | RIF: {row['rif'] or 'N/A'}")
+                c3.write(f"📍 {row['ciudad'] or 'No definida'}")
+                
+                # Botón para activar el modo edición de este usuario específico
+                if c4.button("📝 Editar", key=f"btn_edit_{row['username']}"):
+                    st.session_state[f"edit_mode_{row['username']}"] = True
+                
+                # Si el modo edición está activo para este usuario, mostrar formulario
+                if st.session_state.get(f"edit_mode_{row['username']}", False):
+                    with st.form(key=f"form_edit_{row['username']}"):
+                        st.info(f"Editando perfil de: {row['username']}")
+                        f1, f2 = st.columns(2)
+                        
+                        # Campos de edición
+                        new_pass = f1.text_input("Cambiar Clave", value=row['password'], type="password")
+                        new_nom = f2.text_input("Nombre Completo", value=row['nombre'])
+                        new_tel = f1.text_input("Teléfono", value=row['telefono'] or "")
+                        new_rif = f2.text_input("RIF / CI", value=row['rif'] or "")
+                        new_ciu = f1.text_input("Ciudad", value=row['ciudad'] or "")
+                        new_dir = st.text_area("Dirección Exacta", value=row['direccion'] or "")
+                        
+                        b1, b2 = st.columns(2)
+                        if b1.form_submit_button("💾 Guardar Cambios"):
+                            conn.execute("""
+                                UPDATE usuarios 
+                                SET password=?, nombre=?, telefono=?, rif=?, direccion=?, ciudad=? 
+                                WHERE username=?""", 
+                                (new_pass, new_nom, new_tel, new_rif, new_dir, new_ciu, row['username']))
+                            conn.commit()
+                            st.session_state[f"edit_mode_{row['username']}"] = False
+                            st.success("Datos actualizados correctamente")
+                            st.rerun()
+                            
+                        if b2.form_submit_button("❌ Cancelar"):
+                            st.session_state[f"edit_mode_{row['username']}"] = False
+                            st.rerun()
+                st.markdown("<hr style='margin:10px 0; border-color:#eee'>", unsafe_allow_html=True)
+
+        # --- REGISTRO DE NUEVOS USUARIOS (MANTENIDO) ---
         with st.expander("➕ Registrar Nuevo Usuario"):
-            nu = st.text_input("Correo/Usuario")
-            np = st.text_input("Clave", type="password")
-            nn = st.text_input("Nombre Completo")
-            nr = st.selectbox("Rol", ["cliente", "admin"])
-            if st.button("Guardar Usuario"):
-                conn.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre, rol) VALUES (?,?,?,?)", (nu, np, nn, nr))
+            nu = st.text_input("Correo/Usuario (Nuevo)")
+            np = st.text_input("Clave (Nueva)", type="password")
+            nn = st.text_input("Nombre Completo (Nuevo)")
+            nr = st.selectbox("Rol del nuevo usuario", ["cliente", "admin"])
+            if st.button("Guardar Nuevo Usuario"):
+                conn.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre, rol) VALUES (?,?,?,?)", 
+                             (nu, np, nn, nr))
                 conn.commit()
+                st.success("Usuario creado")
                 st.rerun()
