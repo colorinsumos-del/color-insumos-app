@@ -150,27 +150,6 @@ def limpiar_precio(texto):
 def cargar_catalogo():
     return pd.read_sql("SELECT * FROM productos", get_connection())
 
-@st.fragment
-def card_producto(row, idx):
-    with st.container(border=True):
-        if row['foto_path'] and os.path.exists(row['foto_path']):
-            st.image(row['foto_path'], use_container_width=True)
-        else:
-            st.image("https://via.placeholder.com/150?text=Color+Insumos", use_container_width=True)
-        st.subheader(f"$ {row['precio']:.2f}")
-        st.write(f"**{row['sku']}**")
-        st.caption(row['descripcion'][:80])
-        cant = st.number_input("Cantidad", 1, 500, 1, key=f"q_{row['sku']}_{idx}")
-        if st.button("🛒 Añadir", key=f"btn_{row['sku']}_{idx}", use_container_width=True):
-            uid = st.session_state.user_data['user']
-            # Cargar actual, modificar y guardar en DB
-            carrito_actual = cargar_carrito_db(uid)
-            carrito_actual[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
-            guardar_carrito_db(uid, carrito_actual)
-            st.toast("✅ Añadido y Guardado")
-            time.sleep(0.5)
-            st.rerun()
-
 # --- FLUJO PRINCIPAL ---
 init_db()
 if 'auth' not in st.session_state: st.session_state.auth = False
@@ -189,8 +168,6 @@ if not st.session_state.auth:
 else:
     user = st.session_state.user_data
     uid = user['user']
-    
-    # Sincronizar carrito desde DB al iniciar sesión o refrescar
     carrito_usuario = cargar_carrito_db(uid)
 
     with st.sidebar:
@@ -203,19 +180,55 @@ else:
             st.rerun()
 
     if menu == "🛍️ Tienda":
-        st.title("🛍️ Catálogo")
+        st.title("🛍️ Catálogo de Productos")
         c1, c2 = st.columns([2, 1])
         busq = c1.text_input("🔍 Buscar SKU o Producto...")
         df_full = cargar_catalogo()
         cat_sel = c2.selectbox("📂 Categoría", ["Todas"] + sorted(list(df_full['categoria'].unique())))
         
-        if busq or cat_sel != "Todas":
-            df = df_full.copy()
-            if busq: df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
-            if cat_sel != "Todas": df = df[df['categoria'] == cat_sel]
-            cols = st.columns(4)
-            for i, (_, row) in enumerate(df.iterrows()):
-                with cols[i % 4]: card_producto(row, i)
+        df = df_full.copy()
+        if busq: df = df[df['descripcion'].str.contains(busq, case=False) | df['sku'].str.contains(busq, case=False)]
+        if cat_sel != "Todas": df = df[df['categoria'] == cat_sel]
+
+        # --- DISEÑO DE LISTA COMPACTA (ESTILO PDF) ---
+        st.divider()
+        # Encabezado de la lista
+        h1, h2, h3, h4, h5, h6 = st.columns([0.8, 1.2, 4, 1, 1, 1])
+        h1.caption("Imagen")
+        h2.caption("SKU")
+        h3.caption("Descripción")
+        h4.caption("Precio")
+        h5.caption("Cant.")
+        h6.caption("Acción")
+        st.divider()
+
+        for i, row in df.iterrows():
+            with st.container():
+                col1, col2, col3, col4, col5, col6 = st.columns([0.8, 1.2, 4, 1, 1, 1])
+                
+                # Imagen pequeña (60px)
+                with col1:
+                    if row['foto_path'] and os.path.exists(row['foto_path']):
+                        st.image(row['foto_path'], width=60)
+                    else:
+                        st.image("https://via.placeholder.com/60?text=📦", width=60)
+                
+                col2.markdown(f"**{row['sku']}**")
+                col3.write(row['descripcion'])
+                col4.markdown(f"**${row['precio']:.2f}**")
+                
+                # Cantidad inmediata
+                cant = col5.number_input("n", 1, 500, 1, key=f"q_{row['sku']}_{i}", label_visibility="collapsed")
+                
+                # Botón añadir
+                if col6.button("🛒", key=f"btn_{row['sku']}_{i}", help="Añadir al carrito"):
+                    carrito_actual = cargar_carrito_db(uid)
+                    carrito_actual[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
+                    guardar_carrito_db(uid, carrito_actual)
+                    st.toast(f"✅ {row['sku']} añadido")
+                    time.sleep(0.5)
+                    st.rerun()
+            st.divider()
 
     elif "🛒" in menu:
         st.title("🛒 Carrito de Compras")
@@ -252,7 +265,6 @@ else:
                     "INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) VALUES (?,?,?,?,?,?,?,?,?)",
                     (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(items_p), metodo, total_b, monto_descuento, total_n, "Pendiente")
                 )
-                # Al confirmar, vaciamos el carrito en la DB
                 guardar_carrito_db(uid, {})
                 get_connection().commit()
                 st.success("Pedido enviado!"); time.sleep(1); st.rerun()
@@ -300,8 +312,6 @@ else:
 
     elif menu == "👥 Clientes":
         st.title("👥 Gestión Integral de Clientes")
-        
-        # --- SECCIÓN: AGREGAR NUEVO CLIENTE ---
         with st.expander("➕ Registrar Nuevo Cliente / Empresa", expanded=False):
             with st.form("reg_nuevo_completo"):
                 c1, c2 = st.columns(2)
@@ -312,51 +322,36 @@ else:
                 t_n = c1.text_input("Teléfono Principal")
                 ciu_n = c2.text_input("Ciudad / Zona")
                 d_n = st.text_area("Dirección Fiscal / Despacho")
-                not_n = st.text_area("Notas Internas (Crédito, Observaciones, etc.)")
-                
+                not_n = st.text_area("Notas Internas")
                 if st.form_submit_button("✅ Registrar Cliente"):
                     if u_n and p_n:
                         get_connection().execute(
                             "INSERT INTO usuarios (username, password, nombre, rol, direccion, telefono, rif, ciudad, notas) VALUES (?,?,?,?,?,?,?,?,?)", 
                             (u_n, p_n, n_n, 'cliente', d_n, t_n, rif_n, ciu_n, not_n)
                         )
-                        get_connection().commit(); st.success("Cliente registrado con éxito"); st.rerun()
-                    else: st.error("Usuario y Contraseña son obligatorios.")
+                        get_connection().commit(); st.success("Cliente registrado"); st.rerun()
+                    else: st.error("Usuario y Contraseña requeridos.")
 
         st.divider()
-        
-        # --- SECCIÓN: LISTADO Y EDICIÓN ---
-        st.subheader("Buscador de Clientes")
         bus_cli = st.text_input("Filtrar por nombre, RIF o ciudad...")
-        
         df_clientes = pd.read_sql("SELECT * FROM usuarios WHERE rol='cliente'", get_connection())
         if bus_cli:
-            df_clientes = df_clientes[
-                df_clientes['nombre'].str.contains(bus_cli, case=False, na=False) | 
-                df_clientes['rif'].str.contains(bus_cli, case=False, na=False) |
-                df_clientes['ciudad'].str.contains(bus_cli, case=False, na=False)
-            ]
+            df_clientes = df_clientes[df_clientes['nombre'].str.contains(bus_cli, case=False, na=False)]
 
         for _, cli in df_clientes.iterrows():
-            with st.expander(f"👤 {cli['nombre']} | {cli['ciudad'] or 'Sin Ciudad'} | {cli['rif'] or 'No RIF'}"):
+            with st.expander(f"👤 {cli['nombre']} | {cli['rif']}"):
                 with st.form(key=f"edit_full_{cli['username']}"):
                     col1, col2 = st.columns(2)
-                    e_nom = col1.text_input("Nombre/Empresa", value=cli['nombre'])
-                    e_rif = col2.text_input("R.I.F.", value=cli.get('rif', ''))
-                    e_pass = col1.text_input("Clave de Acceso", value=cli['password'])
-                    e_tlf = col2.text_input("Teléfono", value=cli['telefono'])
+                    e_nom = col1.text_input("Nombre", value=cli['nombre'])
+                    e_rif = col2.text_input("RIF", value=cli.get('rif', ''))
+                    e_pass = col1.text_input("Clave", value=cli['password'])
+                    e_tlf = col2.text_input("Tlf", value=cli['telefono'])
                     e_ciu = col1.text_input("Ciudad", value=cli.get('ciudad', ''))
                     e_dir = st.text_area("Dirección", value=cli['direccion'])
-                    e_not = st.text_area("Notas del Cliente", value=cli.get('notas', ''))
-                    
-                    b1, b2, b3 = st.columns([1, 1, 2])
-                    if b1.form_submit_button("💾 Guardar"):
+                    e_not = st.text_area("Notas", value=cli.get('notas', ''))
+                    if st.form_submit_button("💾 Guardar"):
                         get_connection().execute(
                             "UPDATE usuarios SET nombre=?, password=?, telefono=?, direccion=?, rif=?, ciudad=?, notas=? WHERE username=?",
                             (e_nom, e_pass, e_tlf, e_dir, e_rif, e_ciu, e_not, cli['username'])
                         )
-                        get_connection().commit(); st.success("Datos actualizados"); st.rerun()
-                    
-                    if b2.form_submit_button("🗑️ Eliminar"):
-                        get_connection().execute("DELETE FROM usuarios WHERE username=?", (cli['username'],))
-                        get_connection().commit(); st.warning("Cliente eliminado"); st.rerun()
+                        get_connection().commit(); st.success("Actualizado"); st.rerun()
