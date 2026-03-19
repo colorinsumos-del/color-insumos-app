@@ -72,17 +72,24 @@ def init_db():
 # --- FUNCIONES DE APOYO ---
 def auto_categorizar(descripcion):
     desc = descripcion.lower()
-    categorias = {
-        "Oficina": ["clip", "engrapadora", "perforadora", "archivo", "carpeta", "toner", "tinta", "escritorio", "boligrafo", "resma", "sello"],
-        "Escolar": ["cuaderno", "lapiz", "morral", "sacapunta", "regla", "borrador", "escolar", "colores", "pega", "block"],
-        "Juegos Didácticos": ["rompecabezas", "lego", "didactico", "juego", "mesa", "puzzle", "educativo", "masa", "plastilina"],
-        "Artes Plásticas": ["pincel", "oleo", "acrilico", "bastidor", "lienzo", "arcilla", "tempera", "frio", "pintura", "acuarela"],
-        "Papelería Creativa": ["cartulina", "escarcha", "foami", "pegatina", "silicon", "glitter", "creativa", "diseño", "troquel", "seda"]
-    }
-    for cat, keywords in categorias.items():
-        if any(kw in desc for kw in keywords):
-            return cat
-    return "Varios"
+    
+    # 1. Escritura y Corrección
+    if any(kw in desc for kw in ["lapiz", "boligrafo", "marcador", "resaltador", "corrector", "sacapunta", "borrador", "mina"]):
+        return "Escritura y Corrección"
+    
+    # 2. Arte y Color
+    if any(kw in desc for kw in ["color", "pintura", "tempera", "acuarela", "pincel", "plastilina", "frio", "acrilico"]):
+        return "Arte y Color"
+        
+    # 3. Papelería y Oficina
+    if any(kw in desc for kw in ["resma", "clip", "carpeta", "grapadora", "grapa", "liga", "sobre", "cinta", "pega", "silicon"]):
+        return "Papelería y Oficina"
+        
+    # 4. Escolar y Didáctico
+    if any(kw in desc for kw in ["cuaderno", "libreta", "morral", "regla", "compas", "tijera", "juego", "didactico", "block"]):
+        return "Escolar y Didáctico"
+            
+    return "Varios Pointer"
 
 def limpiar_precio(texto):
     if not texto or str(texto).lower() == "none": return 0.0
@@ -315,13 +322,15 @@ else:
 
     elif menu == "📁 Carga":
         st.title("📁 Importar Catálogo PDF")
-        if st.button("🔄 Re-categorizar Todo el Inventario"):
-            conn = get_connection()
-            productos = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
-            for s, d in productos:
-                conn.execute("UPDATE productos SET categoria = ? WHERE sku = ?", (auto_categorizar(d), s))
-            conn.commit()
-            st.success("Categorías actualizadas según la nueva lógica.")
+        if st.button("🔄 Re-organizar Inventario Pointer"):
+    conn = get_connection()
+    productos = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
+    for sku, desc in productos:
+        nueva_cat = auto_categorizar(desc)
+        conn.execute("UPDATE productos SET categoria = ? WHERE sku = ?", (nueva_cat, sku))
+    conn.commit()
+    st.success("¡Catálogo Pointer organizado con éxito!")
+    st.rerun()
 
         f = st.file_uploader("Archivo PDF", type="pdf")
         if f and st.button("Procesar"):
