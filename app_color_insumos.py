@@ -318,14 +318,32 @@ else:
     elif menu == "📁 Carga":
         st.title("📁 Importar Catálogo PDF")
         
-        # --- BLOQUE CORREGIDO AQUÍ ---
+        # 1. Botón de Re-organización (Debe estar alineado dentro del elif)
         if st.button("🔄 Re-organizar Inventario Pointer"):
             conn = get_connection()
             productos = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
             for sku, desc in productos:
                 nueva_cat = auto_categorizar(desc)
                 conn.execute("UPDATE productos SET categoria = ? WHERE sku = ?", (nueva_cat, sku))
-            conn.commi
+            conn.commit() # <--- Asegúrate que diga commit() completo
+            st.success("¡Catálogo Pointer organizado con éxito!")
+            st.rerun()
+
+        # 2. Subida de archivo
+        f = st.file_uploader("Archivo PDF", type="pdf")
+        if f and st.button("Procesar"):
+            doc = fitz.open(stream=f.read(), filetype="pdf")
+            conn = get_connection()
+            for page in doc:
+                for tab in page.find_tables():
+                    for _, r in tab.to_pandas().iterrows():
+                        sku, desc = str(r.iloc[0]).strip(), str(r.iloc[2]).strip()
+                        pre = limpiar_precio(r.iloc[4])
+                        if len(sku) > 2:
+                            cat = auto_categorizar(desc)
+                            conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, categoria=excluded.categoria", (sku, desc, pre, cat))
+            conn.commit() # <--- Verifica esta línea también
+            st.success("Inventario actualizado")
 
         f = st.file_uploader("Archivo PDF", type="pdf")
         if f and st.button("Procesar"):
