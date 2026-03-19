@@ -139,7 +139,7 @@ else:
                         carrito_usuario[row['sku']] = {"desc": row['descripcion'], "p": row['precio'], "c": cant}
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
 
-    # --- MÓDULO CARGAR PDF (BASADO EN CELDAS) ---
+    # --- MÓDULO CARGAR PDF (EXTRAÍDO DEL ORIGINAL) ---
     elif menu == "📁 Cargar PDF":
         st.title("📁 Importar Inventario (Pointer)")
         f = st.file_uploader("Subir PDF de Lista de Precios", type="pdf")
@@ -150,41 +150,66 @@ else:
                 conn = get_connection()
                 
                 for page in doc:
+                    # Pointer usa tablas con líneas visibles, find_tables es ideal aquí
                     tabs = page.find_tables()
                     if tabs:
                         for tab in tabs:
+                            # Convertimos la tabla detectada en un DataFrame de Pandas
                             df_tab = tab.to_pandas()
-                            # Pointer PDF: Col 0=SKU, Col 1=Imagen, Col 2=Desc, Col 3=Precio Divisa
+                            
+                            # Basado en tu archivo original:
+                            # Columna 0: SKU
+                            # Columna 1: IMAGEN (aquí buscamos la foto por coordenadas)
+                            # Columna 2: DESCRIPCIÓN
+                            # Columna 3 o 4: PRECIO DIVISAS (dependiendo de la versión del PDF)
                             for row_idx, row in df_tab.iterrows():
                                 try:
                                     sku = str(row.iloc[0]).strip()
-                                    desc = str(row.iloc[2]).strip()
+                                    # Limpiamos el SKU de saltos de línea que vienen del PDF
+                                    sku = sku.replace('\n', '').strip()
+                                    
+                                    desc = str(row.iloc[2]).strip().replace('\n', ' ')
+                                    
+                                    # Intentamos obtener el precio de la columna 3 (Precio Divisas)
                                     precio = limpiar_precio(row.iloc[3])
                                     
                                     if len(sku) > 2 and precio > 0:
                                         foto_path = ""
-                                        # Extraer imagen de la celda específica (Columna 1)
+                                        # Lógica de extracción de imagen por celda (Columna 1)
                                         celda_img = tab.rows[row_idx].cells[1]
-                                        rect_celda = fitz.Rect(celda_img)
+                                        if celda_img:
+                                            rect_celda = fitz.Rect(celda_img)
+                                            # Buscamos qué imagen del PDF "cae" dentro de esta celda
+                                            for img_info in page.get_image_info(hashes=True):
+                                                if rect_celda.intersects(fitz.Rect(img_info['bbox'])):
+                                                    pix = fitz.Pixmap(doc, img_info['xref'])
+                                                    
+                                                    # Validación de colores para evitar errores de visualización
+                                                    if pix.n - pix.alpha > 3: 
+                                                        pix = fitz.Pixmap(fitz.csRGB, pix)
+                                                    
+                                                    # Limpieza de nombre de archivo (evita errores con "/" en el SKU)
+                                                    safe_sku = re.sub(r'[\\/*?:"<>|]', "_", sku)
+                                                    p_path = os.path.join(IMG_DIR, f"{safe_sku}.png")
+                                                    pix.save(p_path)
+                                                    foto_path = p_path
+                                                    break
                                         
-                                        for img_info in page.get_image_info(hashes=True):
-                                            if rect_celda.intersects(fitz.Rect(img_info['bbox'])):
-                                                pix = fitz.Pixmap(doc, img_info['xref'])
-                                                if pix.n - pix.alpha > 3: pix = fitz.Pixmap(fitz.csRGB, pix)
-                                                
-                                                safe_sku = re.sub(r'[\\/*?:"<>|]', "_", sku)
-                                                p_path = os.path.join(IMG_DIR, f"{safe_sku}.png")
-                                                pix.save(p_path)
-                                                foto_path = p_path
-                                                break
-                                        
-                                        conn.execute("""INSERT INTO productos (sku, descripcion, precio, categoria, foto_path) 
-                                                     VALUES (?,?,?,?,?) ON CONFLICT(sku) 
-                                                     DO UPDATE SET precio=excluded.precio, foto_path=excluded.foto_path""", 
-                                                     (sku, desc, precio, "General", foto_path))
-                                except: continue
+                                        # Guardado en base de datos con ON CONFLICT para actualizar precios
+                                        conn.execute("""
+                                            INSERT INTO productos (sku, descripcion, precio, categoria, foto_path) 
+                                            VALUES (?,?,?,?,?) 
+                                            ON CONFLICT(sku) 
+                                            DO UPDATE SET 
+                                                precio=excluded.precio, 
+                                                descripcion=excluded.descripcion,
+                                                foto_path=CASE WHEN excluded.foto_path != '' THEN excluded.foto_path ELSE foto_path END
+                                        """, (sku, desc, precio, "General", foto_path))
+                                except Exception as e:
+                                    continue # Si una fila falla, sigue con la siguiente
+                
                 conn.commit()
-                status.update(label="¡Inventario actualizado!", state="complete")
+                status.update(label="¡Inventario actualizado con éxito!", state="complete")
             st.rerun()
 
     # --- MÓDULO USUARIOS (COMPLETO) ---
