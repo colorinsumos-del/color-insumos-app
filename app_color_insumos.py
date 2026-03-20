@@ -276,65 +276,43 @@ else:
     # --- MÓDULO TIENDA ---
     if menu == "🛍️ Tienda":
         st.title("🛍️ Catálogo y Tienda")
-        
-        # 1. INICIALIZACIÓN DE ESTADOS (Clave para que el Reset funcione)
-        if 'filtro_cat_temp' not in st.session_state: st.session_state.filtro_cat_temp = "Todos"
-        if 'filtro_bus_temp' not in st.session_state: st.session_state.filtro_bus_temp = ""
-        if 'pag_actual' not in st.session_state: st.session_state.pag_actual = 1
-
         df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
         
         if df_tienda.empty:
             st.info("No hay productos registrados en la base de datos.")
         else:
-            # --- 2. FILTROS Y BÚSQUEDA ---
+            # --- 1. FILTROS Y BÚSQUEDA ---
             c1, c2, c3 = st.columns([3, 4, 1])
+            f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()))
+            f_bus = c2.text_input("Buscar producto...")
             
-            # Categorías
-            cats = ["Todos"] + list(df_tienda['categoria'].unique())
-            try:
-                idx_actual = cats.index(st.session_state.filtro_cat_temp)
-            except:
-                idx_actual = 0
-
-            f_cat = c1.selectbox("Filtrar por Categoría", cats, index=idx_actual)
-            st.session_state.filtro_cat_temp = f_cat # Guardar estado
-
-            # Búsqueda
-            f_bus = c2.text_input("Buscar producto...", value=st.session_state.filtro_bus_temp)
-            st.session_state.filtro_bus_temp = f_bus # Guardar estado
-            
-            # BOTÓN RESET: Limpia los estados y vuelve a la página 1
+            # Icono de búsqueda/limpieza alineado con los cuadros de texto
             c3.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True) 
-            if c3.button("🔄 Reset", use_container_width=True, help="Limpiar filtros y búsqueda"):
-                st.session_state.filtro_cat_temp = "Todos"
-                st.session_state.filtro_bus_temp = ""
+            if c3.button("🔍 Buscar", use_container_width=True, help="Buscar o limpiar si está en blanco"):
                 st.session_state.pag_actual = 1
                 st.rerun()
 
-            # Aplicar filtros
             df_f = df_tienda.copy()
-            if st.session_state.filtro_cat_temp != "Todos": 
-                df_f = df_f[df_f['categoria'] == st.session_state.filtro_cat_temp]
-            if st.session_state.filtro_bus_temp: 
-                df_f = df_f[df_f['descripcion'].str.contains(st.session_state.filtro_bus_temp, case=False) | 
-                            df_f['sku'].str.contains(st.session_state.filtro_bus_temp, case=False)]
+            if f_cat != "Todos": 
+                df_f = df_f[df_f['categoria'] == f_cat]
+            if f_bus: 
+                df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
             
-            # --- 3. CÁLCULO DE PAGINACIÓN ---
+            # --- 2. CÁLCULO DE PAGINACIÓN ---
             items_pag = 15
             total_p = max(1, (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0))
-            
-            if st.session_state.pag_actual > total_p: 
-                st.session_state.pag_actual = total_p
+            if 'pag_actual' not in st.session_state: st.session_state.pag_actual = 1
+            if st.session_state.pag_actual > total_p: st.session_state.pag_actual = total_p
 
-            # --- 4. SELECTOR DE PÁGINA INDEPENDIENTE ---
+            # --- 3. SELECTOR DE PÁGINA INDEPENDIENTE ---
+            # Colocado fuera de la barra de navegación para no interferir
             col_espacio, col_sel = st.columns([6, 2])
-            p_ir = col_sel.number_input("Ir a la página:", 1, total_p, value=st.session_state.pag_actual, key="selector_tienda")
+            p_ir = col_sel.number_input("Ir a la página:", min_value=1, max_value=total_p, value=st.session_state.pag_actual)
             if p_ir != st.session_state.pag_actual:
                 st.session_state.pag_actual = p_ir
                 st.rerun()
 
-            # --- 5. BARRAS DE NAVEGACIÓN ---
+            # --- 4. BARRAS DE NAVEGACIÓN (INTACTAS) ---
             def barra_navegacion(ubicacion):
                 col_nav = st.columns([1, 1, 2, 1, 1])
                 if col_nav[0].button("⏪", key=f"first_{ubicacion}", use_container_width=True):
@@ -343,9 +321,7 @@ else:
                 if col_nav[1].button("◀️", key=f"prev_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual <= 1)):
                     st.session_state.pag_actual -= 1
                     st.rerun()
-                
-                col_nav[2].markdown(f"<h4 style='text-align: center; margin: 0;'>Pág. {st.session_state.pag_actual} de {total_p}</h4>", unsafe_allow_html=True)
-                
+                col_nav[2].markdown(f"<h3 style='text-align: center; margin: 0;'>Pág. {st.session_state.pag_actual} de {total_p}</h3>", unsafe_allow_html=True)
                 if col_nav[3].button("▶️", key=f"next_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual >= total_p)):
                     st.session_state.pag_actual += 1
                     st.rerun()
@@ -356,7 +332,7 @@ else:
             barra_navegacion("top")
             st.markdown("---")
 
-            # --- 6. LISTADO DE PRODUCTOS ---
+            # --- 5. PRODUCTOS (CON FOTOS MÁS GRANDES) ---
             p_sel = st.session_state.pag_actual
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
                 r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) 
@@ -377,15 +353,14 @@ else:
                 with r4:
                     c_input, c_add, c_del = st.columns([1.2, 1, 0.8])
                     cant_actual = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
-                    # Usamos una key única basada en el SKU para no chocar
-                    nueva_q = c_input.number_input("Cant", 1, 999, cant_actual, label_visibility="collapsed", key=f"cant_{row.sku}")
+                    nueva_q = c_input.number_input("Cant", 1, 999, cant_actual, label_visibility="collapsed", key=f"t_q_{row.sku}")
 
-                    if c_add.button("💾", key=f"add_{row.sku}"):
+                    if c_add.button("💾", key=f"t_s_{row.sku}"):
                         carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_q}
                         guardar_carrito_db(uid, carrito_usuario)
                         st.rerun()
                         
-                    if c_del.button("🗑️", key=f"del_{row.sku}"):
+                    if c_del.button("🗑️", key=f"t_d_{row.sku}"):
                         if row.sku in carrito_usuario:
                             del carrito_usuario[row.sku]
                             guardar_carrito_db(uid, carrito_usuario)
