@@ -403,20 +403,97 @@ else:
                     pdf_data = generar_pdf_recibo(p, conn)
                     st.download_button(f"📥 Descargar PDF #{p['id']}", pdf_data, f"pedido_{p['id']}.pdf", "application/pdf", key=f"pdf_{p['id']}")
 
-    # --- MÓDULO VENTAS (ADMIN) ---
+    # --- MÓDULO VENTAS (ADMIN) - ACTUALIZADO ---
     elif menu == "📊 Ventas" and user['rol'] == 'admin':
-        st.title("📊 Control de Ventas")
-        df_v = pd.read_sql_query("SELECT * FROM pedidos ORDER BY id DESC", conn)
-        if not df_v.empty:
-            st.metric("Ventas Totales Registradas", f"${df_v['total'].sum():.2f}")
-            st.dataframe(df_v)
-            if st.button("📥 Exportar Ventas a Excel"):
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_v.to_excel(writer, index=False, sheet_name='Ventas')
-                st.download_button("Descargar Excel", output.getvalue(), "ventas_colorinsumos.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.title("📊 Panel de Control de Ventas")
+
+        # --- 1. RESUMEN DE MÉTRICAS ---
+        df_ventas = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", conn)
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Total Pedidos", len(df_ventas))
+        with c2:
+            total_usd = df_ventas['total'].sum()
+            st.metric("Ventas Totales", f"${total_usd:,.2f}")
+        with c3:
+            pendientes = len(df_ventas[df_ventas['status'] == 'Pendiente'])
+            st.metric("Por Entregar", pendientes, delta_color="inverse")
+
+        st.markdown("---")
+
+        # --- 2. FILTROS DE BÚSQUEDA ---
+        col_f1, col_f2 = st.columns([2, 2])
+        search_cli = col_f1.text_input("🔍 Buscar por Cliente o ID")
+        status_filter = col_f2.selectbox("Filtrar por Estado", ["Todos", "Pendiente", "Pagado", "Entregado", "Anulado"])
+
+        query_v = "SELECT * FROM pedidos WHERE 1=1"
+        params_v = []
+
+        if status_filter != "Todos":
+            query_v += " AND status = ?"
+            params_v.append(status_filter)
+        if search_cli:
+            query_v += " AND (cliente_nombre LIKE ? OR id LIKE ?)"
+            params_v.extend([f"%{search_cli}%", f"%{search_cli}%"])
+        
+        df_filtrado = pd.read_sql(query_v + " ORDER BY id DESC", conn, params=params_v)
+
+        # --- 3. LISTADO DINÁMICO ---
+        if df_filtrado.empty:
+            st.warning("No se encontraron registros.")
         else:
-            st.info("No hay ventas para mostrar.")
+            for _, v_row in df_filtrado.iterrows():
+                # Color visual (Opcional, si usas st.markdown)
+                color = "orange" if v_row['status'] == "Pendiente" else "green" if v_row['status'] == "Entregado" else "blue"
+                
+                with st.container():
+                    col_id, col_info, col_status, col_actions = st.columns([1, 4, 2, 2])
+                    
+                    col_id.subheader(f"#{v_row['id']}")
+                    
+                    with col_info:
+                        st.markdown(f"**Cliente:** {v_row['cliente_nombre']} | **Fecha:** {v_row['fecha']}")
+                        st.markdown(f"**Total:** `${v_row['total']:.2f}` | **Pago:** {v_row['metodo_pago']}")
+                    
+                    with col_status:
+                        # Asegurar que el estado actual coincida con la lista para no arrojar ValueError
+                        est_actual = v_row['status']
+                        opciones_estado = ["Pendiente", "Pagado", "Entregado", "Anulado"]
+                        idx_estado = opciones_estado.index(est_actual) if est_actual in opciones_estado else 0
+
+                        nuevo_estado = st.selectbox(
+                            "Estado", 
+                            opciones_estado, 
+                            index=idx_estado,
+                            key=f"status_{v_row['id']}"
+                        )
+                        if nuevo_estado != v_row['status']:
+                            conn.execute("UPDATE pedidos SET status=? WHERE id=?", (nuevo_estado, v_row['id']))
+                            conn.commit()
+                            st.rerun()
+
+                    with col_actions:
+                        try:
+                            pdf_b = generar_pdf_recibo(v_row, conn)
+                            st.download_button("📄 PDF", pdf_b, f"Pedido_{v_row['id']}.pdf", "application/pdf", key=f"dl_{v_row['id']}")
+                        except Exception as e:
+                            st.error("Error PDF")
+                        
+                        if st.button("🗑️", key=f"del_v_{v_row['id']}"):
+                            conn.execute("DELETE FROM pedidos WHERE id=?", (v_row['id'],))
+                            conn.commit()
+                            st.rerun()
+        
+                with st.expander("Ver detalles del pedido"):
+                    try:
+                        items = json.loads(v_row['items'])
+                        for sku, d in items.items():
+                            st.write(f"- **{d['c']}x** {sku} ({d['desc']}) - ${d['p']:.2f} c/u")
+                    except:
+                        st.write("Detalles no disponibles.")
+        
+                st.markdown("<hr style='margin:10px 0; border-color:#eee'>", unsafe_allow_html=True)
 
     # --- MÓDULO CARGA (ADMIN) ---
     elif menu == "📁 Carga" and user['rol'] == 'admin':
@@ -480,7 +557,6 @@ else:
                         new_ciu = f2.text_input("Ciudad", value=row['ciudad'] or "")
                         new_dir = st.text_area("Dirección Exacta", value=row['direccion'] or "")
                         
-                        # Agregar edición de rol si es admin
                         new_rol = st.selectbox("Rol", ["cliente", "admin"], index=0 if row['rol'] == 'cliente' else 1)
                         
                         b1, b2 = st.columns(2)
@@ -498,7 +574,7 @@ else:
                                 
                                 conn.commit()
                                 st.session_state[f"edit_mode_{row['username']}"] = False
-                                st.success("Usuario actualizado")
+                                st.success("Usuario y registros vinculados actualizados")
                                 st.rerun()
                             except sqlite3.IntegrityError:
                                 st.error("Error: El nuevo correo ya está registrado por otro usuario.")
