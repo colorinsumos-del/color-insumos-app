@@ -18,11 +18,12 @@ IMG_DIR = os.path.join(BASE_DIR, "static", "fotos")
 CARPETAS_IMPORTAR = [os.path.join(BASE_DIR, "importar_fotos"), os.path.join(BASE_DIR, "importar_fotos2")]
 
 os.makedirs(IMG_DIR, exist_ok=True)
-for carpeta in CARPETAS_IMPORTAR: os.makedirs(carpeta, exist_ok=True)
+for carpeta in CARPETAS_IMPORTAR:
+    os.makedirs(carpeta, exist_ok=True)
 
 st.set_page_config(page_title="Color Insumos - ERP Maestro", layout="wide")
 
-# --- FUNCIONES DE PERSISTENCIA (NUEVO) ---
+# --- FUNCIONES DE PERSISTENCIA ---
 def set_persistent_user(user_data):
     """Guarda los datos del usuario en el localStorage del navegador."""
     val = json.dumps(user_data)
@@ -61,20 +62,12 @@ st.markdown("""
         color: #000000 !important;
         margin: 0;
     }
-    .sku-text { font-weight: bold; color: #1f77b4; margin-bottom: 0; font-size: 0.85rem; }
-    .desc-text { font-size: 0.8rem; color: #444; margin-bottom: 0; line-height: 1.1; }
-    .in-cart-indicator { color: #28a745; font-weight: bold; font-size: 0.8rem; }
-    
-    /* Nuevos estilos para la Tienda */
     .sku-text { font-weight: bold; color: #1f77b4; font-size: 0.9rem; margin-bottom: 0px; }
-    
     .cat-text { color: #888; font-size: 0.75rem; margin-top: -5px; display: block; }
-    
+    .desc-text { font-size: 0.8rem; color: #444; margin-bottom: 0; line-height: 1.1; }
     .desc-text-main { font-size: 1.1rem; font-weight: bold; color: #1f77b4; margin-bottom: 2px; line-height: 1.2; }
-    
-    .stNumberInput div div input { text-align: center; } /* Centrar número en el input */
-    
-    /* Estilos para tablas de pedidos */
+    .in-cart-indicator { color: #28a745; font-weight: bold; font-size: 0.8rem; }
+    .stNumberInput div div input { text-align: center; } 
     .pedido-header {
         background-color: #f8f9fa;
         padding: 10px;
@@ -101,6 +94,7 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, cliente_nombre TEXT, fecha TEXT, 
                   items TEXT, metodo_pago TEXT, subtotal REAL, descuento REAL, total REAL, status TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS carritos (username TEXT PRIMARY KEY, data TEXT)''')
+    
     # Usuario Administrador por defecto
     conn.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre, rol) VALUES (?,?,?,?)", 
                  ('colorinsumos@gmail.com', '20880157', 'Admin Maestro', 'admin'))
@@ -126,8 +120,10 @@ def auto_categorizar(descripcion):
 def limpiar_precio(texto):
     if not texto or str(texto).lower() == "none": return 0.0
     clean = re.sub(r'[^\d,.]', '', str(texto)).replace(',', '.')
-    try: return float(clean)
-    except: return 0.0
+    try: 
+        return float(clean)
+    except: 
+        return 0.0
 
 def guardar_carrito_db(username, carrito_dict):
     conn = get_connection()
@@ -196,7 +192,8 @@ def vincular_imagenes_locales():
     exito = 0
     extensiones = ('.png', '.jpg', '.jpeg', '.webp')
     for ruta_carpeta in CARPETAS_IMPORTAR:
-        if not os.path.exists(ruta_carpeta): continue
+        if not os.path.exists(ruta_carpeta): 
+            continue
         for archivo in os.listdir(ruta_carpeta):
             if archivo.lower().endswith(extensiones):
                 sku_archivo = os.path.splitext(archivo)[0].strip()
@@ -234,10 +231,10 @@ if not st.session_state.auth:
         if res:
             st.session_state.auth = True
             st.session_state.user_data = {"user": res[0], "nombre": res[2], "rol": res[3]}
-            # Guardar en navegador
             set_persistent_user(st.session_state.user_data)
             st.rerun()
-        else: st.error("Credenciales incorrectas")
+        else: 
+            st.error("Credenciales incorrectas")
 else:
     user = st.session_state.user_data
     uid = user['user']
@@ -246,13 +243,20 @@ else:
     subtotal_v = sum(d['p'] * d['c'] for d in carrito_usuario.values())
     cant_v = sum(d['c'] for d in carrito_usuario.values())
 
-    # --- NAVEGACIÓN LATERAL ---
+    # --- NAVEGACIÓN LATERAL CON PERSISTENCIA ---
     with st.sidebar:
         st.header(f"👤 {user['nombre']}")
-        opc = ["🛍️ Tienda", f"🛒 Carrito ({cant_v})", "📜 Mis Pedidos"]
-        if user['rol'] == 'admin': 
-            opc += ["📊 Ventas", "📁 Carga", "🖼️ Fotos", "👥 Usuarios"]
-        menu = st.radio("Navegación", opc)
+        
+        opc_base = ["🛍️ Tienda", f"🛒 Carrito ({cant_v})", "📜 Mis Pedidos"]
+        opc_admin = ["📊 Ventas", "📁 Carga", "🖼️ Fotos", "👥 Usuarios"]
+        opc = opc_base + opc_admin if user['rol'] == 'admin' else opc_base
+
+        if 'menu_idx' not in st.session_state:
+            st.session_state.menu_idx = 0
+
+        # Mantenemos la selección bloqueada para que no salte de menú
+        menu = st.radio("Navegación", opc, index=st.session_state.menu_idx)
+        st.session_state.menu_idx = opc.index(menu)
         
         st.markdown("### 💳 Resumen de Cuenta")
         with st.container():
@@ -278,16 +282,17 @@ else:
         df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
         
         if df_tienda.empty:
-            st.info("No hay productos registrados.")
+            st.info("No hay productos registrados en la base de datos.")
         else:
-            # Filtros y Paginación
             c1, c2 = st.columns([2, 3])
             f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()))
             f_bus = c2.text_input("Buscar producto...")
             
             df_f = df_tienda.copy()
-            if f_cat != "Todos": df_f = df_f[df_f['categoria'] == f_cat]
-            if f_bus: df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
+            if f_cat != "Todos": 
+                df_f = df_f[df_f['categoria'] == f_cat]
+            if f_bus: 
+                df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
             
             items_pag = 15
             total_p = (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0)
@@ -303,16 +308,15 @@ else:
                     st.image(img)
                 
                 with r2:
-                    st.markdown(f'<p style="font-size:1.1rem; font-weight:bold; color:#1f77b4; margin-bottom:0px;">{row.descripcion}</p>', unsafe_allow_html=True)
-                    st.markdown(f'<span style="color:#888; font-size:0.85rem;">{row.sku} | {row.categoria}</span>', unsafe_allow_html=True)
+                    st.markdown(f'<p class="desc-text-main">{row.descripcion}</p>', unsafe_allow_html=True)
+                    st.markdown(f'<span class="cat-text">{row.sku} | {row.categoria}</span>', unsafe_allow_html=True)
                     if row.sku in carrito_usuario:
-                        st.markdown(f'<span style="color:#27ae60; font-size:0.9rem; font-weight:bold;">✅ En carrito: {carrito_usuario[row.sku]["c"]} und.</span>', unsafe_allow_html=True)
+                        st.markdown(f'<span class="in-cart-indicator">✅ En carrito: {carrito_usuario[row.sku]["c"]} und.</span>', unsafe_allow_html=True)
 
                 with r3:
                     st.markdown(f"### ${row.precio:.2f}")
 
                 with r4:
-                    # INTERFAZ SOLICITADA: Cuadro + Guardar + Borrar
                     c_input, c_add, c_del = st.columns([1.2, 1, 0.8])
                     cant_actual = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
                     
@@ -338,17 +342,12 @@ else:
         if not carrito_usuario:
             st.info("Tu carrito está vacío.")
         else:
-            subtotal_v = 0
             for sku, data in list(carrito_usuario.items()):
-                # Sumamos al subtotal antes de renderizar
-                subtotal_v += data['p'] * data['c']
-                
                 with st.container():
                     cr1, cr2, cr3, cr4 = st.columns([4, 2, 2.5, 1.2])
                     cr1.write(f"**{sku}**\n{data['desc']}")
                     cr2.write(f"${data['p']:.2f}")
                     
-                    # Misma lógica: Cuadro + Guardar + Borrar
                     ci_q, ci_s, ci_d = cr3.columns([1.2, 1, 1])
                     q_edit = ci_q.number_input("Cant", 1, 999, data['c'], label_visibility="collapsed", key=f"c_q_{sku}")
                     
@@ -365,7 +364,6 @@ else:
                     cr4.write(f"**${(data['p'] * data['c']):.2f}**")
 
             st.markdown("---")
-            # --- CÁLCULOS FINALES ---
             metodo = st.radio("Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
             desc = (subtotal_v * 0.30) if metodo == "Divisas / Zelle" else ((subtotal_v * 0.10) if subtotal_v >= 100 else 0)
             total_f = subtotal_v - desc
@@ -385,7 +383,43 @@ else:
                 st.balloons()
                 st.rerun()
 
-    elif menu == "📁 Carga":
+    # --- MÓDULO MIS PEDIDOS ---
+    elif menu == "📜 Mis Pedidos":
+        st.title("📜 Historial de Pedidos")
+        if user['rol'] != 'admin':
+            query = "SELECT * FROM pedidos WHERE username=? ORDER BY id DESC"
+            pedidos = pd.read_sql_query(query, conn, params=(uid,))
+        else:
+            query = "SELECT * FROM pedidos ORDER BY id DESC"
+            pedidos = pd.read_sql_query(query, conn)
+            
+        if pedidos.empty: 
+            st.info("No se han registrado pedidos.")
+        else:
+            for _, p in pedidos.iterrows():
+                with st.expander(f"Pedido #{p['id']} - {p['fecha']} - {p['cliente_nombre']} (${p['total']:.2f})"):
+                    st.write(f"**Método:** {p['metodo_pago']} | **Status:** {p['status']}")
+                    st.json(json.loads(p['items']))
+                    pdf_data = generar_pdf_recibo(p, conn)
+                    st.download_button(f"📥 Descargar PDF #{p['id']}", pdf_data, f"pedido_{p['id']}.pdf", "application/pdf", key=f"pdf_{p['id']}")
+
+    # --- MÓDULO VENTAS (ADMIN) ---
+    elif menu == "📊 Ventas" and user['rol'] == 'admin':
+        st.title("📊 Control de Ventas")
+        df_v = pd.read_sql_query("SELECT * FROM pedidos ORDER BY id DESC", conn)
+        if not df_v.empty:
+            st.metric("Ventas Totales Registradas", f"${df_v['total'].sum():.2f}")
+            st.dataframe(df_v)
+            if st.button("📥 Exportar Ventas a Excel"):
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_v.to_excel(writer, index=False, sheet_name='Ventas')
+                st.download_button("Descargar Excel", output.getvalue(), "ventas_colorinsumos.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else:
+            st.info("No hay ventas para mostrar.")
+
+    # --- MÓDULO CARGA (ADMIN) ---
+    elif menu == "📁 Carga" and user['rol'] == 'admin':
         st.title("📁 Carga masiva de Catálogo")
         if st.button("🔄 Ejecutar Re-categorización Automática"):
             prods = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
@@ -405,20 +439,22 @@ else:
                             pre = limpiar_precio(r.iloc[4])
                             if len(sku) > 2:
                                 conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, categoria=excluded.categoria", (sku, desc, pre, auto_categorizar(desc)))
-                        except: continue
+                        except: 
+                            continue
             conn.commit()
-            st.success("Catálogo procesado y actualizado.")
+            st.success("Catálogo procesado y actualizado exitosamente.")
 
-    elif menu == "🖼️ Fotos":
+    # --- MÓDULO FOTOS (ADMIN) ---
+    elif menu == "🖼️ Fotos" and user['rol'] == 'admin':
         st.title("🖼️ Sincronización de Galería")
         st.info("Coloque las imágenes en la carpeta 'importar_fotos' con el nombre del SKU.")
         if st.button("Vincular Imágenes con Productos"):
             n = vincular_imagenes_locales()
-            st.success(f"Se actualizaron {n} productos con sus fotos.")
+            st.success(f"Se actualizaron {n} productos con sus fotos locales.")
 
-    elif menu == "👥 Usuarios":
+    # --- MÓDULO USUARIOS (ADMIN) ---
+    elif menu == "👥 Usuarios" and user['rol'] == 'admin':
         st.title("👥 Gestión de Usuarios")
-        # Obtenemos todos los campos incluyendo el username actual
         df_u = pd.read_sql("SELECT username, password, nombre, rol, telefono, rif, direccion, ciudad FROM usuarios", conn)
         
         for i, row in df_u.iterrows():
@@ -433,39 +469,36 @@ else:
                 
                 if st.session_state.get(f"edit_mode_{row['username']}", False):
                     with st.form(key=f"form_edit_{row['username']}"):
-                        st.info(f"Editando Perfil")
+                        st.info(f"Editando Perfil del Usuario")
                         f1, f2 = st.columns(2)
                         
-                        # NUEVO: Permitir editar el correo (Username)
                         new_user = f1.text_input("Correo / Usuario", value=row['username'])
                         new_pass = f2.text_input("Clave", value=row['password'], type="password")
-                        
                         new_nom = f1.text_input("Nombre Completo", value=row['nombre'])
                         new_tel = f2.text_input("Teléfono", value=row['telefono'] or "")
-                        
                         new_rif = f1.text_input("RIF / CI", value=row['rif'] or "")
                         new_ciu = f2.text_input("Ciudad", value=row['ciudad'] or "")
-                        
                         new_dir = st.text_area("Dirección Exacta", value=row['direccion'] or "")
+                        
+                        # Agregar edición de rol si es admin
+                        new_rol = st.selectbox("Rol", ["cliente", "admin"], index=0 if row['rol'] == 'cliente' else 1)
                         
                         b1, b2 = st.columns(2)
                         if b1.form_submit_button("💾 Guardar Cambios"):
                             try:
-                                # 1. Actualizar tabla principal de usuarios
                                 conn.execute("""
                                     UPDATE usuarios 
-                                    SET username=?, password=?, nombre=?, telefono=?, rif=?, direccion=?, ciudad=? 
+                                    SET username=?, password=?, nombre=?, rol=?, telefono=?, rif=?, direccion=?, ciudad=? 
                                     WHERE username=?""", 
-                                    (new_user, new_pass, new_nom, new_tel, new_rif, new_dir, new_ciu, row['username']))
+                                    (new_user, new_pass, new_nom, new_rol, new_tel, new_rif, new_dir, new_ciu, row['username']))
                                 
-                                # 2. Si el correo cambió, actualizamos las llaves foráneas en otras tablas
                                 if new_user != row['username']:
                                     conn.execute("UPDATE pedidos SET username=? WHERE username=?", (new_user, row['username']))
                                     conn.execute("UPDATE carritos SET username=? WHERE username=?", (new_user, row['username']))
                                 
                                 conn.commit()
                                 st.session_state[f"edit_mode_{row['username']}"] = False
-                                st.success("Usuario y registros vinculados actualizados")
+                                st.success("Usuario actualizado")
                                 st.rerun()
                             except sqlite3.IntegrityError:
                                 st.error("Error: El nuevo correo ya está registrado por otro usuario.")
@@ -476,13 +509,14 @@ else:
                 st.markdown("<hr style='margin:10px 0; border-color:#eee'>", unsafe_allow_html=True)
 
         with st.expander("➕ Registrar Nuevo Usuario"):
-            nu = st.text_input("Correo/Usuario (Nuevo)")
-            np = st.text_input("Clave (Nueva)", type="password")
-            nn = st.text_input("Nombre Completo (Nuevo)")
-            nr = st.selectbox("Rol del nuevo usuario", ["cliente", "admin"])
-            if st.button("Guardar Nuevo Usuario"):
-                conn.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre, rol) VALUES (?,?,?,?)", 
-                             (nu, np, nn, nr))
-                conn.commit()
-                st.success("Usuario creado")
-                st.rerun()
+            with st.form("new_user_form_admin"):
+                nu = st.text_input("Correo/Usuario (Nuevo)")
+                np = st.text_input("Clave (Nueva)", type="password")
+                nn = st.text_input("Nombre Completo (Nuevo)")
+                nr = st.selectbox("Rol del nuevo usuario", ["cliente", "admin"])
+                if st.form_submit_button("Guardar Nuevo Usuario"):
+                    conn.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre, rol) VALUES (?,?,?,?)", 
+                                 (nu, np, nn, nr))
+                    conn.commit()
+                    st.success("Usuario creado satisfactoriamente")
+                    st.rerun()
