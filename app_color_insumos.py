@@ -342,8 +342,10 @@ else:
         if c_del.button("🗑️", key=f"t_del_{row.sku}"):
             if row.sku in carrito_usuario:
                 del carrito_usuario[row.sku]
-                guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                guardar_carrito_db(uid, carrito_usuario)
+                st.rerun()
                 
+    # Esta es la línea 347 corregida:
     st.markdown("<hr style='margin:8px 0; border-color:#f0f0f0'>", unsafe_allow_html=True)
 
     # --- MÓDULO CARRITO ---
