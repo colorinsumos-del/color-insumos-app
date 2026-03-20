@@ -274,89 +274,79 @@ else:
 
     # --- MÓDULO TIENDA ---
     if menu == "🛍️ Tienda":
-        st.title("🛍️ Catálogo Pointer")
-        c1, c2, c3 = st.columns([3, 2, 1])
-        busq = c1.text_input("🔍 Buscar SKU o descripción")
-        df_cats = pd.read_sql("SELECT DISTINCT categoria FROM productos", conn)
-        cat_sel = c2.selectbox("📂 Filtrar Categoría", ["Todos"] + df_cats['categoria'].tolist())
+        st.title("🛍️ Catálogo y Tienda")
         
-        query = "SELECT * FROM productos WHERE 1=1"
-        params = []
-        if cat_sel != "Todos": query += " AND categoria = ?"; params.append(cat_sel)
-        if busq: query += " AND (descripcion LIKE ? OR sku LIKE ?)"; params.extend([f"%{busq}%", f"%{busq}%"])
+        # Filtros y paginación
+        c1, c2, c3 = st.columns([2, 2, 1])
+        f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df['categoria'].unique()))
+        f_bus = c2.text_input("Buscar producto...")
         
-        df = pd.read_sql(query, conn, params=params)
-
-        if df.empty:
-            st.info("No se encontraron productos.")
-        else:
-            items_pag = 20
-            total_p = (len(df) // items_pag) + (1 if len(df) % items_pag > 0 else 0)
-            p_sel = st.number_input(f"Página", 1, total_p, 1)
+        df_f = df.copy()
+        if f_cat != "Todos": df_f = df_f[df_f['categoria'] == f_cat]
+        if f_bus: df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
+        
+        items_pag = 15
+        total_p = (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0)
+        p_sel = st.number_input(f"Página", 1, total_p if total_p > 0 else 1, 1)
+        
+        # --- BUCLE DE PRODUCTOS CON NUEVO DISEÑO ---
+        for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
+            r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 3.2])
             
-            # --- NUEVO DISEÑO DE ITEM EN TIENDA ---
-    # Línea 298: El inicio del bucle
-for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
-    # Línea 299: Debe tener sangría (indentación)
-    r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 3.0]) 
-    
-    with r1:
-        img = row.foto_path if row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/60"
-        st.image(img)
-        
-    with r2:
-        # Nombre del artículo arriba (Grande y color SKU)
-        st.markdown(f'<p class="desc-text-main">{row.descripcion}</p>', unsafe_allow_html=True)
-        # SKU y Categoría debajo
-        st.markdown(f'<span class="sku-text">{row.sku}</span> <span class="cat-text">{row.categoria}</span>', unsafe_allow_html=True)
-        
-        if row.sku in carrito_usuario:
-            st.markdown('<span class="in-cart-indicator">✅ En carrito</span>', unsafe_allow_html=True)
-            
-    # El resto de las líneas también deben mantener la misma sangría
-    r3.markdown(f"### ${row.precio:.2f}")
-    
-    with r4:
-        c_btn1, c_input, c_btn2, c_add, c_del = st.columns([0.5, 1, 0.5, 1, 0.8])
-            
-        # Cantidad actual en el carrito o 1 por defecto para añadir
-        cant_actual = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
-        
-        if c_btn1.button("➖", key=f"t_m_{row.sku}"):
-            if row.sku in carrito_usuario:
-                if carrito_usuario[row.sku]['c'] > 1: 
-                    carrito_usuario[row.sku]['c'] -= 1
-                    guardar_carrito_db(uid, carrito_usuario); st.rerun()
-
-        # Cuadro centrado para colocar cantidades
-        nueva_cant = c_input.number_input("Cant", min_value=1, value=cant_actual, label_visibility="collapsed", key=f"n_in_{row.sku}")
-        
-        if c_btn2.button("➕", key=f"t_p_{row.sku}"):
-            if row.sku in carrito_usuario:
-                carrito_usuario[row.sku]['c'] += 1
-                guardar_carrito_db(uid, carrito_usuario); st.rerun()
-
-        # Botón Añadir/Actualizar al lado de Eliminar
-        if c_add.button("💾", key=f"t_save_{row.sku}", help="Añadir o actualizar cantidad"):
-            carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_cant}
-            guardar_carrito_db(uid, carrito_usuario); st.rerun()
-            
-        if c_del.button("🗑️", key=f"t_del_{row.sku}"):
-            if row.sku in carrito_usuario:
-                del carrito_usuario[row.sku]
-                guardar_carrito_db(uid, carrito_usuario)
-                st.rerun()
+            with r1:
+                img = row.foto_path if row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/60"
+                st.image(img)
                 
-    # Esta es la línea 347 corregida:
-    st.markdown("<hr style='margin:8px 0; border-color:#f0f0f0'>", unsafe_allow_html=True)
+            with r2:
+                # 1. Nombre del artículo (Grande y color SKU)
+                st.markdown(f'<p style="font-size:1.15rem; font-weight:bold; color:#1f77b4; margin-bottom:0px;">{row.descripcion}</p>', unsafe_allow_html=True)
+                # 2. SKU y Categoría (Gris) debajo
+                st.markdown(f'<span style="font-weight:bold; color:#1f77b4; font-size:0.9rem;">{row.sku}</span> | <span style="color:#888; font-size:0.85rem;">{row.categoria}</span>', unsafe_allow_html=True)
+                
+                if row.sku in carrito_usuario:
+                    st.markdown('<span style="color:#27ae60; font-size:0.8rem; font-weight:bold;">✅ En carrito</span>', unsafe_allow_html=True)
+                    
+            with r3:
+                st.markdown(f"<h3 style='margin:0;'>${row.precio:.2f}</h3>", unsafe_allow_html=True)
+            
+            with r4:
+                # Controles: [ - ] [ Cant ] [ + ] [ Guardar ] [ Borrar ]
+                c_btn1, c_input, c_btn2, c_add, c_del = st.columns([0.5, 1, 0.5, 0.8, 0.6])
+                
+                cant_actual = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
+                
+                if c_btn1.button("➖", key=f"t_m_{row.sku}"):
+                    if row.sku in carrito_usuario and carrito_usuario[row.sku]['c'] > 1:
+                        carrito_usuario[row.sku]['c'] -= 1
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
 
-    # --- MÓDULO CARRITO ---
+                # Cuadro de texto para cantidad (centrado)
+                nueva_cant = c_input.number_input("N", 1, 999, cant_actual, label_visibility="collapsed", key=f"n_in_{row.sku}")
+                
+                if c_btn2.button("➕", key=f"t_p_{row.sku}"):
+                    if row.sku in carrito_usuario:
+                        carrito_usuario[row.sku]['c'] += 1
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
+
+                if c_add.button("💾", key=f"t_save_{row.sku}", help="Añadir/Actualizar"):
+                    carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_cant}
+                    guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                    
+                if c_del.button("🗑️", key=f"t_del_{row.sku}"):
+                    if row.sku in carrito_usuario:
+                        del carrito_usuario[row.sku]
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                        
+            st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
+
     elif menu.startswith("🛒 Carrito"):
         st.title("🛒 Carrito de Compras")
         if not carrito_usuario:
             st.info("Tu carrito está vacío.")
         else:
+            subtotal_v = 0
             for sku, data in list(carrito_usuario.items()):
+                subtotal_v += data['p'] * data['c']
                 with st.container():
                     cr1, cr2, cr3, cr4 = st.columns([4, 2, 2, 1])
                     cr1.write(f"**{sku}**\n{data['desc']}")
@@ -373,7 +363,8 @@ for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
                     if cr4.button("🗑️", key=f"c_d_{sku}"):
                         del carrito_usuario[sku]
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
-
+            
+            # --- CÁLCULOS DE PAGO ---
             st.markdown("---")
             metodo = st.radio("Seleccione Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
             desc = (subtotal_v * 0.30) if metodo == "Divisas / Zelle" else ((subtotal_v * 0.10) if subtotal_v >= 100 else 0)
