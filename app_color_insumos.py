@@ -276,6 +276,7 @@ else:
     # --- MÓDULO TIENDA ---
     if menu == "🛍️ Tienda":
         st.title("🛍️ Catálogo y Tienda")
+        # Obtenemos los productos desde la base de datos definida en el motor
         df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
         
         if df_tienda.empty:
@@ -291,20 +292,25 @@ else:
             if f_bus: 
                 df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
             
+            # Lógica de Paginación Mejorada
             items_pag = 15
             total_p = (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0)
 
-            # Sincronización de página
+            # Inicialización de estado para sincronizar controles
             if 'pag_actual' not in st.session_state:
                 st.session_state.pag_actual = 1
+            
+            # Validación: evitar errores si los filtros reducen el número de páginas
+            if st.session_state.pag_actual > total_p:
+                st.session_state.pag_actual = max(1, total_p)
 
-            # Control Superior
+            # --- CONTROL SUPERIOR (Como en tu imagen) ---
             p_sel = st.number_input(f"Página (Total: {total_p})", 1, max(1, total_p), st.session_state.pag_actual, key="p_top")
             st.session_state.pag_actual = p_sel
 
             st.markdown("---")
 
-            # Listado de productos
+            # Listado de productos usando itertuples para eficiencia
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
                 r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 2.5])
                 
@@ -313,6 +319,7 @@ else:
                     st.image(img)
                 
                 with r2:
+                    # Uso de clases CSS definidas en el encabezado del archivo
                     st.markdown(f'<p class="desc-text-main">{row.descripcion}</p>', unsafe_allow_html=True)
                     st.markdown(f'<span class="cat-text">{row.sku} | {row.categoria}</span>', unsafe_allow_html=True)
                     if row.sku in carrito_usuario:
@@ -340,13 +347,14 @@ else:
                             st.rerun()
                 st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
 
-            # Control Inferior
+            # --- CONTROL INFERIOR ---
             st.markdown(" ")
             p_sel_bot = st.number_input(f"Ir a página (Total: {total_p})", 1, max(1, total_p), st.session_state.pag_actual, key="p_bottom")
+            
+            # Si el usuario cambia el selector de abajo, sincronizamos y recargamos
             if p_sel_bot != st.session_state.pag_actual:
                 st.session_state.pag_actual = p_sel_bot
                 st.rerun()
-
     # --- MÓDULO CARRITO ---
     elif menu == "🛒 Carrito": # Antes decía menu.startswith("🛒 Carrito")
         st.title("🛒 Carrito de Compras")
