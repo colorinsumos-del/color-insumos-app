@@ -283,15 +283,24 @@ else:
         else:
             # --- 1. FILTROS Y BÚSQUEDA ---
             c1, c2, c3 = st.columns([3, 4, 1])
-            f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()))
-            f_bus = c2.text_input("Buscar producto...")
             
-            # Icono de búsqueda/limpieza alineado con los cuadros de texto
+            # Agregamos 'key' para poder manipular los valores desde el botón Reset
+            f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()), key="filtro_categoria")
+            f_bus = c2.text_input("Buscar producto...", key="filtro_busqueda")
+            
             c3.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True) 
-            if c3.button("🔍 Buscar", use_container_width=True, help="Buscar o limpiar si está en blanco"):
+            
+            # BOTÓN RESET: Limpia todo y reinicia la tienda
+            if c3.button("🔄 Reset", use_container_width=True, help="Limpiar filtros y volver al inicio"):
+                st.session_state.filtro_categoria = "Todos"
+                st.session_state.filtro_busqueda = ""
                 st.session_state.pag_actual = 1
+                # También reiniciamos los selectores numéricos si existen
+                if "go_top" in st.session_state: st.session_state.go_top = 1
+                if "go_bottom" in st.session_state: st.session_state.go_bottom = 1
                 st.rerun()
 
+            # Aplicar filtros al DataFrame
             df_f = df_tienda.copy()
             if f_cat != "Todos": 
                 df_f = df_f[df_f['categoria'] == f_cat]
@@ -305,14 +314,13 @@ else:
             if st.session_state.pag_actual > total_p: st.session_state.pag_actual = total_p
 
             # --- 3. SELECTOR DE PÁGINA INDEPENDIENTE ---
-            # Colocado fuera de la barra de navegación para no interferir
             col_espacio, col_sel = st.columns([6, 2])
-            p_ir = col_sel.number_input("Ir a la página:", min_value=1, max_value=total_p, value=st.session_state.pag_actual)
+            p_ir = col_sel.number_input("Ir a la página:", min_value=1, max_value=total_p, value=st.session_state.pag_actual, key="selector_directo")
             if p_ir != st.session_state.pag_actual:
                 st.session_state.pag_actual = p_ir
                 st.rerun()
 
-            # --- 4. BARRAS DE NAVEGACIÓN (INTACTAS) ---
+            # --- 4. BARRAS DE NAVEGACIÓN ---
             def barra_navegacion(ubicacion):
                 col_nav = st.columns([1, 1, 2, 1, 1])
                 if col_nav[0].button("⏪", key=f"first_{ubicacion}", use_container_width=True):
@@ -332,7 +340,7 @@ else:
             barra_navegacion("top")
             st.markdown("---")
 
-            # --- 5. PRODUCTOS (CON FOTOS MÁS GRANDES) ---
+            # --- 5. LISTADO DE PRODUCTOS ---
             p_sel = st.session_state.pag_actual
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
                 r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) 
