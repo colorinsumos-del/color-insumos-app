@@ -281,12 +281,14 @@ else:
         if df_tienda.empty:
             st.info("No hay productos registrados en la base de datos.")
         else:
-            # 1. FILTROS CON BOTÓN DE RESET
-            c1, c2, c3 = st.columns([2, 3, 1])
+            # --- 1. FILTROS Y BÚSQUEDA ---
+            c1, c2, c3 = st.columns([3, 4, 1])
             f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()))
             f_bus = c2.text_input("Buscar producto...")
             
-            if c3.button("🔄 Reset", use_container_width=True):
+            # Icono de búsqueda/limpieza alineado con los cuadros de texto
+            c3.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True) 
+            if c3.button("🔍 Buscar", use_container_width=True, help="Buscar o limpiar si está en blanco"):
                 st.session_state.pag_actual = 1
                 st.rerun()
 
@@ -296,12 +298,21 @@ else:
             if f_bus: 
                 df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
             
-            # --- PAGINACIÓN ---
+            # --- 2. CÁLCULO DE PAGINACIÓN ---
             items_pag = 15
             total_p = max(1, (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0))
             if 'pag_actual' not in st.session_state: st.session_state.pag_actual = 1
             if st.session_state.pag_actual > total_p: st.session_state.pag_actual = total_p
 
+            # --- 3. SELECTOR DE PÁGINA INDEPENDIENTE ---
+            # Colocado fuera de la barra de navegación para no interferir
+            col_espacio, col_sel = st.columns([6, 2])
+            p_ir = col_sel.number_input("Ir a la página:", min_value=1, max_value=total_p, value=st.session_state.pag_actual)
+            if p_ir != st.session_state.pag_actual:
+                st.session_state.pag_actual = p_ir
+                st.rerun()
+
+            # --- 4. BARRAS DE NAVEGACIÓN (INTACTAS) ---
             def barra_navegacion(ubicacion):
                 col_nav = st.columns([1, 1, 2, 1, 1])
                 if col_nav[0].button("⏪", key=f"first_{ubicacion}", use_container_width=True):
@@ -321,10 +332,10 @@ else:
             barra_navegacion("top")
             st.markdown("---")
 
-            # --- PRODUCTOS (CON FOTOS MÁS GRANDES) ---
+            # --- 5. PRODUCTOS (CON FOTOS MÁS GRANDES) ---
             p_sel = st.session_state.pag_actual
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
-                r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) # r1 creció de 0.8 a 1.2
+                r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) 
                 
                 with r1:
                     img = row.foto_path if hasattr(row, 'foto_path') and row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/100"
