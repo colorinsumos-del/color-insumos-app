@@ -624,29 +624,98 @@ else:
 
     # --- MÓDULO CARGA (ADMIN) ---
     elif menu == "📁 Carga" and user['rol'] == 'admin':
-        st.title("📁 Carga masiva de Catálogo")
-        if st.button("🔄 Ejecutar Re-categorización Automática"):
-            prods = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
-            for sku, d in prods:
-                conn.execute("UPDATE productos SET categoria = ? WHERE sku = ?", (auto_categorizar(d), sku))
-            conn.commit()
-            st.success("Categorías actualizadas correctamente.")
+        st.title("📁 Gestión de Catálogo e Inventario")
+        
+        # Separamos por pestañas para mayor orden
+        tab_pdf, tab_excel = st.tabs(["📄 Carga desde PDF", "📊 Carga desde Excel/CSV"])
 
-        f = st.file_uploader("Subir PDF del Catálogo Pointer", type="pdf")
-        if f and st.button("🚀 Iniciar Extracción de Datos"):
-            doc = fitz.open(stream=f.read(), filetype="pdf")
-            for page in doc:
-                for tab in page.find_tables():
-                    for _, r in tab.to_pandas().iterrows():
-                        try:
-                            sku, desc = str(r.iloc[0]).strip(), str(r.iloc[2]).strip()
-                            pre = limpiar_precio(r.iloc[4])
-                            if len(sku) > 2:
-                                conn.execute("INSERT INTO productos (sku, descripcion, precio, categoria) VALUES (?,?,?,?) ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, categoria=excluded.categoria", (sku, desc, pre, auto_categorizar(desc)))
-                        except: 
-                            continue
-            conn.commit()
-            st.success("Catálogo procesado y actualizado exitosamente.")
+        # --- PESTAÑA 1: PDF (Lógica original mejorada) ---
+        with tab_pdf:
+            st.subheader("Importar desde Catálogo Pointer (PDF)")
+            if st.button("🔄 Re-categorizar productos existentes"):
+                prods = conn.execute("SELECT sku, descripcion FROM productos").fetchall()
+                for sku, d in prods:
+                    conn.execute("UPDATE productos SET categoria = ? WHERE sku = ?", (auto_categorizar(d), sku))
+                conn.commit()
+                st.success("Categorías actualizadas.")
+
+            f_pdf = st.file_uploader("Subir PDF", type="pdf", key="pdf_up")
+            if f_pdf and st.button("🚀 Procesar PDF"):
+                doc = fitz.open(stream=f_pdf.read(), filetype="pdf")
+                count = 0
+                for page in doc:
+                    for tab in page.find_tables():
+                        for _, r in tab.to_pandas().iterrows():
+                            try:
+                                sku, desc = str(r.iloc[0]).strip(), str(r.iloc[2]).strip()
+                                pre = limpiar_precio(r.iloc[4])
+                                if len(sku) > 1:
+                                    conn.execute("""
+                                        INSERT INTO productos (sku, descripcion, precio, categoria) 
+                                        VALUES (?,?,?,?) 
+                                        ON CONFLICT(sku) DO UPDATE SET precio=excluded.precio, categoria=excluded.categoria
+                                    """, (sku, desc, pre, auto_categorizar(desc)))
+                                    count += 1
+                            except: continue
+                conn.commit()
+                st.success(f"Se procesaron {count} items desde el PDF.")
+
+        # --- PESTAÑA 2: EXCEL / CSV (NUEVO) ---
+        with tab_excel:
+            st.subheader("Actualización masiva vía Excel")
+            st.info("El archivo debe contener las columnas: **SKU, Descripcion, Precio**. (La categoría es opcional)")
+            
+            f_xl = st.file_uploader("Subir archivo Excel o CSV", type=["xlsx", "csv"], key="xl_up")
+            
+            if f_xl:
+                try:
+                    # Detectar tipo de archivo
+                    if f_xl.name.endswith('.csv'):
+                        df_imp = pd.read_csv(f_xl)
+                    else:
+                        df_imp = pd.read_excel(f_xl)
+                    
+                    st.write("Vista previa de los datos detectados:")
+                    st.dataframe(df_imp.head(5), use_container_width=True)
+
+                    # Mapeo de columnas dinámico
+                    cols = df_imp.columns.tolist()
+                    c_m1, c_m2, c_m3 = st.columns(3)
+                    sel_sku = c_m1.selectbox("Columna SKU", cols, index=0 if "sku" in str(cols).lower() else 0)
+                    sel_des = c_m2.selectbox("Columna Descripción", cols, index=1 if "desc" in str(cols).lower() else 0)
+                    sel_pre = c_m3.selectbox("Columna Precio", cols, index=2 if "pre" in str(cols).lower() else 0)
+
+                    if st.button("📥 Importar Datos de Excel", type="primary"):
+                        exito_xl = 0
+                        for _, fila in df_imp.iterrows():
+                            try:
+                                v_sku = str(fila[sel_sku]).strip()
+                                v_des = str(fila[sel_des]).strip()
+                                v_pre = limpiar_precio(fila[sel_pre])
+                                
+                                # Si no hay categoría en el Excel, la generamos automáticamente
+                                v_cat = str(fila['Categoria']) if 'Categoria' in fila else auto_categorizar(v_des)
+
+                                if len(v_sku) > 0 and v_sku != "nan":
+                                    conn.execute("""
+                                        INSERT INTO productos (sku, descripcion, precio, categoria) 
+                                        VALUES (?,?,?,?) 
+                                        ON CONFLICT(sku) DO UPDATE SET 
+                                            descripcion=excluded.descripcion,
+                                            precio=excluded.precio,
+                                            categoria=excluded.categoria
+                                    """, (v_sku, v_des, v_pre, v_cat))
+                                    exito_xl += 1
+                            except Exception as e:
+                                st.error(f"Error en fila {v_sku}: {e}")
+                                continue
+                        
+                        conn.commit()
+                        st.success(f"✅ ¡Éxito! {exito_xl} productos actualizados/creados.")
+                        st.balloons()
+                        
+                except Exception as e:
+                    st.error(f"No se pudo leer el archivo: {e}")
 
     # --- MÓDULO FOTOS (ADMIN) ---
     elif menu == "🖼️ Fotos" and user['rol'] == 'admin':
