@@ -463,7 +463,7 @@ else:
                 st.success("¡Pedido enviado correctamente!")
                 st.balloons()
                 st.rerun()
-
+                
     # --- MÓDULO MIS PEDIDOS ---
     elif menu == "📜 Mis Pedidos":
         st.title("📜 Historial de Pedidos")
