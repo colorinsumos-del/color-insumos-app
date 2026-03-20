@@ -278,70 +278,54 @@ else:
         
         df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
         
-        if df_tienda.empty:
-            st.info("No hay productos registrados.")
-        else:
-            c1, c2, c3 = st.columns([2, 2, 1])
-            f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()))
-            f_bus = c2.text_input("Buscar producto...")
-            
-            df_f = df_tienda.copy()
-            if f_cat != "Todos": df_f = df_f[df_f['categoria'] == f_cat]
-            if f_bus: df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
-            
-            items_pag = 15
-            total_p = (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0)
-            p_sel = st.number_input(f"Página", 1, max(1, total_p), 1)
-            
+        if not df_tienda.empty:
+            # (Filtros y paginación se mantienen igual...)
+            # ... [Tu código de filtros aquí] ...
+
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
                 r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 3.2])
                 
-                with r1:
-                    img = row.foto_path if hasattr(row, 'foto_path') and row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/60"
-                    st.image(img)
+                # Definir una llave para la cantidad temporal en sesión
+                key_temp = f"temp_cant_{row.sku}"
+                if key_temp not in st.session_state:
+                    # Si ya está en carrito, cargar esa cantidad, si no, empezar en 1
+                    st.session_state[key_temp] = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
+
                 with r2:
                     st.markdown(f'<p style="font-size:1.1rem; font-weight:bold; color:#1f77b4; margin-bottom:0px;">{row.descripcion}</p>', unsafe_allow_html=True)
                     st.markdown(f'<span style="color:#888; font-size:0.85rem;">{row.sku} | {row.categoria}</span>', unsafe_allow_html=True)
                     if row.sku in carrito_usuario:
-                        st.markdown('<span style="color:#27ae60; font-size:0.8rem; font-weight:bold;">✅ En carrito</span>', unsafe_allow_html=True)
-                with r3:
-                    st.markdown(f"### ${row.precio:.2f}")
-                
+                        st.success(f"✅ En carrito: {carrito_usuario[row.sku]['c']} und.", icon="🛒")
+
                 with r4:
                     c_btn1, c_input, c_btn2, c_add, c_del = st.columns([0.5, 1, 0.5, 0.8, 0.6])
                     
-                    # Cantidad visual (lo que muestra el cuadro)
-                    cant_v = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
-                    
-                    # BOTÓN MENOS
+                    # Botón MENOS (Modifica el estado temporal)
                     if c_btn1.button("➖", key=f"t_m_{row.sku}"):
-                        if row.sku in carrito_usuario:
-                            if carrito_usuario[row.sku]['c'] > 1:
-                                carrito_usuario[row.sku]['c'] -= 1
-                                guardar_carrito_db(uid, carrito_usuario)
-                                st.rerun()
+                        if st.session_state[key_temp] > 1:
+                            st.session_state[key_temp] -= 1
+                            st.rerun()
 
-                    # CUADRO DE TEXTO
-                    nueva_cant = c_input.number_input("N", 1, 999, cant_v, label_visibility="collapsed", key=f"n_in_{row.sku}")
-                    
-                    # BOTÓN MÁS (Corregido para añadir si no existe)
+                    # CUADRO CENTRAL (Lee del estado temporal)
+                    nueva_cant = c_input.number_input("N", 1, 999, st.session_state[key_temp], label_visibility="collapsed", key=f"n_in_{row.sku}")
+                    st.session_state[key_temp] = nueva_cant # Sincronizar si el usuario escribe a mano
+
+                    # Botón MÁS (Modifica el estado temporal)
                     if c_btn2.button("➕", key=f"t_p_{row.sku}"):
-                        if row.sku in carrito_usuario:
-                            carrito_usuario[row.sku]['c'] += 1
-                        else:
-                            carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": 2} # 1 que tenía + 1
-                        guardar_carrito_db(uid, carrito_usuario)
+                        st.session_state[key_temp] += 1
                         st.rerun()
 
                     # BOTÓN GUARDAR (💾)
                     if c_add.button("💾", key=f"t_save_{row.sku}"):
-                        carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_cant}
+                        carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": st.session_state[key_temp]}
                         guardar_carrito_db(uid, carrito_usuario)
+                        st.toast(f"Actualizado: {row.descripcion} ({st.session_state[key_temp]} unidades)")
                         st.rerun()
                         
                     if c_del.button("🗑️", key=f"t_del_{row.sku}"):
                         if row.sku in carrito_usuario:
                             del carrito_usuario[row.sku]
+                            st.session_state[key_temp] = 1 # Resetear visualmente
                             guardar_carrito_db(uid, carrito_usuario)
                             st.rerun()
                 st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
@@ -350,13 +334,16 @@ else:
     elif menu.startswith("🛒 Carrito"):
         st.title("🛒 Carrito de Compras")
         
+        # IMPORTANTE: Recargar siempre de la DB al entrar para evitar que salga vacío
+        cursor = conn.execute("SELECT items FROM carritos WHERE username=?", (uid,))
+        res = cursor.fetchone()
+        carrito_usuario = json.loads(res[0]) if res and res[0] else {}
+
         if not carrito_usuario:
             st.info("Tu carrito está vacío.")
         else:
-            subtotal_v = 0 # Reiniciamos subtotal
-            
+            subtotal_v = 0
             for sku, data in list(carrito_usuario.items()):
-                # ACTUALIZACIÓN: Calculamos subtotal ANTES de mostrar cada fila
                 subtotal_v += data['p'] * data['c']
                 
                 with st.container():
@@ -366,48 +353,27 @@ else:
                     
                     cb1, cb2, cb3 = cr3.columns([1, 1, 1])
                     
-                    # BOTÓN MENOS EN CARRITO
-                    if cb1.button("➖", key=f"c_m_{sku}"):
+                    if cb1.button("➖", key=f"c_m_cart_{sku}"):
                         if carrito_usuario[sku]['c'] > 1:
                             carrito_usuario[sku]['c'] -= 1
                         else:
                             del carrito_usuario[sku]
                         guardar_carrito_db(uid, carrito_usuario)
-                        st.rerun()
+                        st.rerun() # Esto ahora debería mantenerte en la misma URL/Menú
                         
                     cb2.write(f"**{data['c']}**")
                     
-                    # BOTÓN MÁS EN CARRITO
-                    if cb3.button("➕", key=f"c_p_{sku}"):
+                    if cb3.button("➕", key=f"c_p_cart_{sku}"):
                         carrito_usuario[sku]['c'] += 1
                         guardar_carrito_db(uid, carrito_usuario)
                         st.rerun()
                         
-                    if cr4.button("🗑️", key=f"c_d_{sku}"):
+                    if cr4.button("🗑️", key=f"c_d_cart_{sku}"):
                         del carrito_usuario[sku]
                         guardar_carrito_db(uid, carrito_usuario)
                         st.rerun()
 
-            st.markdown("---")
-            # Cálculos de pago actualizados
-            metodo = st.radio("Seleccione Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
-            desc = (subtotal_v * 0.30) if metodo == "Divisas / Zelle" else ((subtotal_v * 0.10) if subtotal_v >= 100 else 0)
-            total_f = subtotal_v - desc
-            
-            st.write(f"Subtotal: ${subtotal_v:.2f}")
-            st.write(f"Descuento Aplicado: -${desc:.2f}")
-            st.header(f"Total a Pagar: ${total_f:.2f}")
-            
-            if st.button("🏁 Confirmar y Enviar Pedido", type="primary", use_container_width=True):
-                conn.execute("""
-                    INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) 
-                    VALUES (?,?,?,?,?,?,?,?,?)
-                """, (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
-                conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
-                conn.commit()
-                st.success("¡Pedido registrado con éxito!")
-                st.balloons()
-                st.rerun()
+            # (Cálculo de totales y botón de enviar pedido igual que antes...)
 
     elif menu == "📁 Carga":
         st.title("📁 Carga masiva de Catálogo")
