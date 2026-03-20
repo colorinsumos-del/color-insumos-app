@@ -288,16 +288,14 @@ else:
             # --- FILTROS Y BOTÓN RESET ---
             c1, c2, c3 = st.columns([2, 3, 1])
             
-            # Usamos keys para poder resetear los widgets visualmente
             f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()), key="filtro_cat")
             f_bus = c2.text_input("Buscar producto...", key="filtro_bus")
             
             if c3.button("🔄 Reset", use_container_width=True, help="Limpiar todo y volver a pág. 1"):
-                # LIMPIEZA TOTAL:
                 st.session_state.filtro_cat = "Todos"
                 st.session_state.filtro_bus = ""
                 st.session_state.pag_actual = 1
-                # Limpiamos también el input de "Ir a" si existe
+                # Resetear también los widgets de "Ir a"
                 if "go_top" in st.session_state: st.session_state.go_top = 1
                 if "go_bottom" in st.session_state: st.session_state.go_bottom = 1
                 st.rerun()
@@ -318,7 +316,7 @@ else:
             if st.session_state.pag_actual > total_p:
                 st.session_state.pag_actual = total_p
 
-            # --- BARRA DE NAVEGACIÓN ---
+            # --- FUNCIÓN DE NAVEGACIÓN SINCRONIZADA ---
             def barra_navegacion(ubicacion):
                 col_nav = st.columns([0.5, 0.5, 1.5, 0.8, 0.5, 0.5])
                 
@@ -332,8 +330,10 @@ else:
                 
                 col_nav[2].markdown(f"<p style='text-align: center; margin-top: 10px; font-weight: bold;'>Pág. {st.session_state.pag_actual} de {total_p}</p>", unsafe_allow_html=True)
                 
-                # CAMPO PARA IR A PÁGINA ESPECÍFICA
-                p_ir = col_nav[3].number_input("Ir a", 1, total_p, st.session_state.pag_actual, key=f"go_{ubicacion}", label_visibility="collapsed")
+                # Sincronización: El value siempre sigue a st.session_state.pag_actual
+                p_ir = col_nav[3].number_input("Ir a", 1, total_p, value=st.session_state.pag_actual, key=f"go_{ubicacion}", label_visibility="collapsed")
+                
+                # Si este widget específico cambia, actualizamos el estado global
                 if p_ir != st.session_state.pag_actual:
                     st.session_state.pag_actual = p_ir
                     st.rerun()
@@ -346,6 +346,7 @@ else:
                     st.session_state.pag_actual = total_p
                     st.rerun()
 
+            # Mostrar barra superior
             barra_navegacion("top")
             st.markdown("---")
 
@@ -375,6 +376,7 @@ else:
                     if c_add.button("💾", key=f"t_s_{row.sku}"):
                         carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_q}
                         guardar_carrito_db(uid, carrito_usuario)
+                        st.toast(f"Actualizado: {row.descripcion}")
                         st.rerun()
                         
                     if c_del.button("🗑️", key=f"t_d_{row.sku}"):
@@ -384,6 +386,7 @@ else:
                             st.rerun()
                 st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
 
+            # Mostrar barra inferior (ahora funcionará en sincronía con la de arriba)
             barra_navegacion("bottom")
                 
     # --- MÓDULO CARRITO ---
