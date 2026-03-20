@@ -276,97 +276,74 @@ else:
     if menu == "🛍️ Tienda":
         st.title("🛍️ Catálogo y Tienda")
         
-        # --- 1. CARGA SEGURA DE DATOS ---
-        # Esto evita el error de "df is not defined" o columna "categoria" faltante
         df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
         
         if df_tienda.empty:
-            st.info("No hay productos registrados en la base de datos.")
+            st.info("No hay productos registrados.")
         else:
-            # --- 2. FILTROS Y BÚSQUEDA ---
             c1, c2, c3 = st.columns([2, 2, 1])
+            f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()))
+            f_bus = c2.text_input("Buscar producto...")
             
-            # Validar si la columna categoria existe para el filtro
-            columnas = df_tienda.columns
-            opciones_cat = ["Todos"] + list(df_tienda['categoria'].unique()) if 'categoria' in columnas else ["Todos"]
-            
-            f_cat = c1.selectbox("Filtrar por Categoría", opciones_cat)
-            f_bus = c2.text_input("Buscar producto (Nombre o SKU)...")
-            
-            # Aplicar Filtros
             df_f = df_tienda.copy()
-            if f_cat != "Todos": 
-                df_f = df_f[df_f['categoria'] == f_cat]
-            if f_bus: 
-                df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | 
-                            df_f['sku'].str.contains(f_bus, case=False)]
+            if f_cat != "Todos": df_f = df_f[df_f['categoria'] == f_cat]
+            if f_bus: df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
             
-            # --- 3. PAGINACIÓN ---
             items_pag = 15
             total_p = (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0)
-            p_sel = st.number_input(f"Página (Total: {total_p})", 1, max(1, total_p), 1)
+            p_sel = st.number_input(f"Página", 1, max(1, total_p), 1)
             
-            st.markdown("---")
-
-            # --- 4. BUCLE DE PRODUCTOS (DISEÑO SOLICITADO) ---
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
-                # Definición de columnas para la fila del producto
                 r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 3.2])
                 
                 with r1:
                     img = row.foto_path if hasattr(row, 'foto_path') and row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/60"
                     st.image(img)
-                    
                 with r2:
-                    # A. Nombre del artículo: Grande y color azul SKU (#1f77b4)
-                    st.markdown(f'<p style="font-size:1.15rem; font-weight:bold; color:#1f77b4; margin-bottom:0px;">{row.descripcion}</p>', unsafe_allow_html=True)
-                    
-                    # B. SKU (Azul) y Categoría (Gris) en la parte de abajo
-                    cat_val = row.categoria if hasattr(row, 'categoria') else "General"
-                    st.markdown(f'<span style="font-weight:bold; color:#1f77b4; font-size:0.9rem;">{row.sku}</span> | <span style="color:#888; font-size:0.85rem;">{cat_val}</span>', unsafe_allow_html=True)
-                    
+                    st.markdown(f'<p style="font-size:1.1rem; font-weight:bold; color:#1f77b4; margin-bottom:0px;">{row.descripcion}</p>', unsafe_allow_html=True)
+                    st.markdown(f'<span style="color:#888; font-size:0.85rem;">{row.sku} | {row.categoria}</span>', unsafe_allow_html=True)
                     if row.sku in carrito_usuario:
                         st.markdown('<span style="color:#27ae60; font-size:0.8rem; font-weight:bold;">✅ En carrito</span>', unsafe_allow_html=True)
-                        
                 with r3:
-                    st.markdown(f"<h3 style='margin:0;'>${row.precio:.2f}</h3>", unsafe_allow_html=True)
+                    st.markdown(f"### ${row.precio:.2f}")
                 
                 with r4:
-                    # Controles: [ - ] [ Cantidad ] [ + ] [ Guardar ] [ Borrar ]
                     c_btn1, c_input, c_btn2, c_add, c_del = st.columns([0.5, 1, 0.5, 0.8, 0.6])
                     
-                    cant_actual = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
+                    # Cantidad visual (lo que muestra el cuadro)
+                    cant_v = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
                     
-                    # Botón Menos
+                    # BOTÓN MENOS
                     if c_btn1.button("➖", key=f"t_m_{row.sku}"):
-                        if row.sku in carrito_usuario and carrito_usuario[row.sku]['c'] > 1:
-                            carrito_usuario[row.sku]['c'] -= 1
-                            guardar_carrito_db(uid, carrito_usuario)
-                            st.rerun()
+                        if row.sku in carrito_usuario:
+                            if carrito_usuario[row.sku]['c'] > 1:
+                                carrito_usuario[row.sku]['c'] -= 1
+                                guardar_carrito_db(uid, carrito_usuario)
+                                st.rerun()
 
-                    # CUADRO CENTRAL PARA CANTIDADES
-                    nueva_cant = c_input.number_input("N", 1, 999, cant_actual, label_visibility="collapsed", key=f"n_in_{row.sku}")
+                    # CUADRO DE TEXTO
+                    nueva_cant = c_input.number_input("N", 1, 999, cant_v, label_visibility="collapsed", key=f"n_in_{row.sku}")
                     
-                    # Botón Más
+                    # BOTÓN MÁS (Corregido para añadir si no existe)
                     if c_btn2.button("➕", key=f"t_p_{row.sku}"):
                         if row.sku in carrito_usuario:
                             carrito_usuario[row.sku]['c'] += 1
-                            guardar_carrito_db(uid, carrito_usuario)
-                            st.rerun()
+                        else:
+                            carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": 2} # 1 que tenía + 1
+                        guardar_carrito_db(uid, carrito_usuario)
+                        st.rerun()
 
-                    # BOTÓN DE AÑADIR/ACTUALIZAR (Al lado de eliminar)
-                    if c_add.button("💾", key=f"t_save_{row.sku}", help="Confirmar cantidad y añadir"):
+                    # BOTÓN GUARDAR (💾)
+                    if c_add.button("💾", key=f"t_save_{row.sku}"):
                         carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_cant}
                         guardar_carrito_db(uid, carrito_usuario)
                         st.rerun()
                         
-                    # Botón Eliminar
                     if c_del.button("🗑️", key=f"t_del_{row.sku}"):
                         if row.sku in carrito_usuario:
                             del carrito_usuario[row.sku]
                             guardar_carrito_db(uid, carrito_usuario)
                             st.rerun()
-                            
                 st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
 
         # --- MÓDULO CARRITO ---
@@ -376,10 +353,10 @@ else:
         if not carrito_usuario:
             st.info("Tu carrito está vacío.")
         else:
-            subtotal_v = 0 # Inicialización crítica
+            subtotal_v = 0 # Reiniciamos subtotal
             
             for sku, data in list(carrito_usuario.items()):
-                # Cálculo de subtotal en cada iteración
+                # ACTUALIZACIÓN: Calculamos subtotal ANTES de mostrar cada fila
                 subtotal_v += data['p'] * data['c']
                 
                 with st.container():
@@ -388,26 +365,31 @@ else:
                     cr2.write(f"${data['p']:.2f}")
                     
                     cb1, cb2, cb3 = cr3.columns([1, 1, 1])
+                    
+                    # BOTÓN MENOS EN CARRITO
                     if cb1.button("➖", key=f"c_m_{sku}"):
-                        if data['c'] > 1:
+                        if carrito_usuario[sku]['c'] > 1:
                             carrito_usuario[sku]['c'] -= 1
                         else:
                             del carrito_usuario[sku]
-                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                        guardar_carrito_db(uid, carrito_usuario)
+                        st.rerun()
                         
                     cb2.write(f"**{data['c']}**")
                     
+                    # BOTÓN MÁS EN CARRITO
                     if cb3.button("➕", key=f"c_p_{sku}"):
                         carrito_usuario[sku]['c'] += 1
-                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                        guardar_carrito_db(uid, carrito_usuario)
+                        st.rerun()
                         
                     if cr4.button("🗑️", key=f"c_d_{sku}"):
                         del carrito_usuario[sku]
-                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                        guardar_carrito_db(uid, carrito_usuario)
+                        st.rerun()
 
             st.markdown("---")
-            
-            # Selección de Pago y Descuentos
+            # Cálculos de pago actualizados
             metodo = st.radio("Seleccione Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
             desc = (subtotal_v * 0.30) if metodo == "Divisas / Zelle" else ((subtotal_v * 0.10) if subtotal_v >= 100 else 0)
             total_f = subtotal_v - desc
@@ -417,12 +399,10 @@ else:
             st.header(f"Total a Pagar: ${total_f:.2f}")
             
             if st.button("🏁 Confirmar y Enviar Pedido", type="primary", use_container_width=True):
-                fecha_pedido = datetime.now().strftime("%d/%m/%Y %H:%M")
                 conn.execute("""
                     INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) 
                     VALUES (?,?,?,?,?,?,?,?,?)
-                """, (uid, user['nombre'], fecha_pedido, json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
-                
+                """, (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
                 conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
                 conn.commit()
                 st.success("¡Pedido registrado con éxito!")
