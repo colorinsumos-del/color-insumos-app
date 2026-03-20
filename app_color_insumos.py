@@ -248,7 +248,7 @@ else:
         st.header(f"👤 {user['nombre']}")
         
         opc_base = ["🛍️ Tienda", "🛒 Carrito", "📜 Mis Pedidos"]
-        opc_admin = ["📊 Ventas", "📁 Carga", "🖼️ Fotos", "👥 Usuarios"]
+        opc_admin = ["📊 Ventas", "📁 Carga", "🖼️ Fotos", "👥 Usuarios", "💾 Respaldo"]
         opc = opc_base + opc_admin if user['rol'] == 'admin' else opc_base
 
         # Cambiamos el nombre del carrito para que no cambie dinámicamente en el menú
@@ -723,3 +723,74 @@ else:
                     conn.commit()
                     st.success("Usuario creado satisfactoriamente")
                     st.rerun()
+                    
+                    # --- MÓDULO RESPALDO (ADMIN) ---
+    elif menu == "💾 Respaldo" and user['rol'] == 'admin':
+        st.title("💾 Centro de Respaldo y Restauración")
+        st.warning("Este módulo permite exportar e importar la base de datos completa en formato JSON.")
+
+        tab_exp, tab_imp = st.tabs(["📤 Exportar Datos", "📥 Importar Datos"])
+
+        with tab_exp:
+            st.subheader("Generar Copia de Seguridad")
+            tablas = ["usuarios", "productos", "pedidos", "carritos"]
+            
+            backup_completo = {}
+            for t in tablas:
+                df_t = pd.read_sql(f"SELECT * FROM {t}", conn)
+                backup_completo[t] = df_t.to_dict(orient="records")
+            
+            json_backup = json.dumps(backup_completo, indent=4)
+            
+            st.info("El archivo descargado contiene: Usuarios, Productos, Pedidos y Carritos.")
+            st.download_button(
+                label="📥 Descargar Backup Maestro (.json)",
+                data=json_backup,
+                file_name=f"backup_color_insumos_{datetime.now().strftime('%d_%m_%Y')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+
+        with tab_imp:
+            st.subheader("Restaurar desde archivo")
+            st.error("⚠️ PRECAUCIÓN: Importar datos sobrescribirá registros con el mismo ID/SKU.")
+            
+            archivo_importar = st.file_uploader("Subir archivo de backup (.json)", type="json")
+            
+            if archivo_importar:
+                if st.button("🔥 Iniciar Restauración Masiva", type="primary"):
+                    try:
+                        datos = json.load(archivo_importar)
+                        
+                        # Importar Usuarios
+                        if "usuarios" in datos:
+                            for u in datos["usuarios"]:
+                                conn.execute("""INSERT OR REPLACE INTO usuarios 
+                                    (username, password, nombre, rol, direccion, telefono, rif, ciudad, notas) 
+                                    VALUES (?,?,?,?,?,?,?,?,?)""", 
+                                    (u['username'], u['password'], u['nombre'], u['rol'], u.get('direccion'), 
+                                     u.get('telefono'), u.get('rif'), u.get('ciudad'), u.get('notas')))
+                        
+                        # Importar Productos
+                        if "productos" in datos:
+                            for p in datos["productos"]:
+                                conn.execute("""INSERT OR REPLACE INTO productos 
+                                    (sku, descripcion, precio, categoria, foto_path) 
+                                    VALUES (?,?,?,?,?)""", 
+                                    (p['sku'], p['descripcion'], p['precio'], p['categoria'], p.get('foto_path')))
+                        
+                        # Importar Pedidos
+                        if "pedidos" in datos:
+                            for ped in datos["pedidos"]:
+                                conn.execute("""INSERT OR REPLACE INTO pedidos 
+                                    (id, username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) 
+                                    VALUES (?,?,?,?,?,?,?,?,?,?)""", 
+                                    (ped['id'], ped['username'], ped['cliente_nombre'], ped['fecha'], 
+                                     ped['items'], ped['metodo_pago'], ped['subtotal'], ped['descuento'], 
+                                     ped['total'], ped['status']))
+                        
+                        conn.commit()
+                        st.success("✅ ¡Restauración completada con éxito!")
+                        st.balloons()
+                    except Exception as e:
+                        st.error(f"Error al importar: {e}")
