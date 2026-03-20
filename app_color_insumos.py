@@ -278,65 +278,69 @@ else:
         
         df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
         
-        if not df_tienda.empty:
-            # [Aquí van tus filtros y paginación...]
-            # ...
+        if df_tienda.empty:
+            st.info("No hay productos registrados.")
+        else:
+            # Filtros (Categoría y Buscador)
+            c1, c2 = st.columns([2, 3])
+            opciones_cat = ["Todos"] + list(df_tienda['categoria'].unique()) if 'categoria' in df_tienda.columns else ["Todos"]
+            f_cat = c1.selectbox("Filtrar por Categoría", opciones_cat)
+            f_bus = c2.text_input("Buscar producto por nombre o SKU...")
             
-            for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
-                # LLAVE TEMPORAL: Para que el + y - solo cambien el número del medio
-                key_temp = f"temp_q_{row.sku}"
-                if key_temp not in st.session_state:
-                    # Si ya está en carrito, inicia con esa cantidad; si no, con 1
-                    st.session_state[key_temp] = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
+            df_f = df_tienda.copy()
+            if f_cat != "Todos": df_f = df_f[df_f['categoria'] == f_cat]
+            if f_bus: df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
+            
+            # Paginación
+            items_pag = 15
+            total_p = (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0)
+            p_sel = st.number_input(f"Página (Total: {total_p})", 1, max(1, total_p), 1)
+            
+            st.markdown("---")
 
-                r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 3.2])
+            for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
+                r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 2.5])
+                
+                with r1:
+                    img = row.foto_path if hasattr(row, 'foto_path') and row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/60"
+                    st.image(img)
                 
                 with r2:
-                    st.markdown(f'<p style="font-size:1.1rem; font-weight:bold; color:#1f77b4; margin-bottom:0px;">{row.descripcion}</p>', unsafe_allow_html=True)
+                    st.markdown(f'<p style="font-size:1.15rem; font-weight:bold; color:#1f77b4; margin-bottom:0px;">{row.descripcion}</p>', unsafe_allow_html=True)
                     st.markdown(f'<span style="color:#888; font-size:0.85rem;">{row.sku} | {row.categoria}</span>', unsafe_allow_html=True)
                     if row.sku in carrito_usuario:
-                        # NOTIFICACIÓN DE ESTADO: Ahora dice cuántas hay en el carrito real
-                        st.info(f"🛒 En carrito: {carrito_usuario[row.sku]['c']} unidades", icon="✅")
+                        st.markdown(f'<span style="color:#27ae60; font-size:0.9rem; font-weight:bold;">✅ En carrito: {carrito_usuario[row.sku]["c"]} und.</span>', unsafe_allow_html=True)
+
+                with r3:
+                    st.markdown(f"### ${row.precio:.2f}")
 
                 with r4:
-                    c_btn1, c_input, c_btn2, c_add, c_del = st.columns([0.5, 1, 0.5, 0.8, 0.6])
+                    # Lógica simplificada: Cuadro de número + Guardar + Eliminar
+                    c_input, c_add, c_del = st.columns([1.2, 1, 0.8])
                     
-                    # BOTÓN MENOS: Solo cambia el número central
-                    if c_btn1.button("➖", key=f"t_m_{row.sku}"):
-                        if st.session_state[key_temp] > 1:
-                            st.session_state[key_temp] -= 1
-                            st.rerun()
+                    # Cantidad inicial: si ya está en carrito, muestra esa; si no, 1
+                    cant_prev = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
+                    nueva_q = c_input.number_input("Cant", 1, 999, cant_prev, label_visibility="collapsed", key=f"t_q_{row.sku}")
 
-                    # CUADRO CENTRAL: Lee de la sesión temporal
-                    nueva_q = c_input.number_input("N", 1, 999, st.session_state[key_temp], label_visibility="collapsed", key=f"n_in_{row.sku}")
-                    st.session_state[key_temp] = nueva_q 
-
-                    # BOTÓN MÁS: Solo cambia el número central
-                    if c_btn2.button("➕", key=f"t_p_{row.sku}"):
-                        st.session_state[key_temp] += 1
-                        st.rerun()
-
-                    # BOTÓN GUARDAR (💾): Este sí actualiza el carrito real
-                    if c_add.button("💾", key=f"t_save_{row.sku}"):
-                        carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": st.session_state[key_temp]}
+                    if c_add.button("💾", key=f"t_save_{row.sku}", help="Guardar en carrito"):
+                        carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_q}
                         guardar_carrito_db(uid, carrito_usuario)
-                        # Notificación detallada
-                        st.toast(f"Añadido: {st.session_state[key_temp]} unidades de {row.sku}")
+                        st.toast(f"Añadido: {nueva_q} und. de {row.sku}")
                         st.rerun()
                         
                     if c_del.button("🗑️", key=f"t_del_{row.sku}"):
                         if row.sku in carrito_usuario:
                             del carrito_usuario[row.sku]
-                            st.session_state[key_temp] = 1 
                             guardar_carrito_db(uid, carrito_usuario)
                             st.rerun()
+                            
                 st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
 
     # --- MÓDULO CARRITO ---
-    elif menu == "🛒 Carrito": # Asegúrate de que el nombre coincida EXACTAMENTE con el del sidebar
-        st.title("🛒 Tu Pedido")
+    elif menu.startswith("🛒 Carrito"):
+        st.title("🛒 Carrito de Compras")
         
-        # Recargar datos frescos para que uid siempre esté definido aquí dentro
+        # Recarga de seguridad
         cursor = conn.execute("SELECT items FROM carritos WHERE username=?", (uid,))
         res = cursor.fetchone()
         carrito_usuario = json.loads(res[0]) if res and res[0] else {}
@@ -349,39 +353,37 @@ else:
                 subtotal_v += data['p'] * data['c']
                 
                 with st.container():
-                    cr1, cr2, cr3, cr4 = st.columns([4, 2, 2, 1])
+                    cr1, cr2, cr3, cr4 = st.columns([4, 2, 2, 1.5])
                     cr1.write(f"**{sku}**\n{data['desc']}")
                     cr2.write(f"${data['p']:.2f}")
                     
-                    cb1, cb2, cb3 = cr3.columns([1, 1, 1])
-                    if cb1.button("➖", key=f"c_m_cart_{sku}"):
-                        if data['c'] > 1:
-                            carrito_usuario[sku]['c'] -= 1
-                        else:
-                            del carrito_usuario[sku]
-                        guardar_carrito_db(uid, carrito_usuario)
-                        st.rerun() # Al estar dentro de este elif, se mantiene aquí
-                        
-                    cb2.write(f"**{data['c']}**")
+                    # Misma lógica que en la tienda: Input + Guardar + Borrar
+                    ci_q, ci_save, ci_del = cr3.columns([1.2, 1, 1])
+                    q_edit = ci_q.number_input("Cant", 1, 999, data['c'], label_visibility="collapsed", key=f"c_q_{sku}")
                     
-                    if cb3.button("➕", key=f"c_p_cart_{sku}"):
-                        carrito_usuario[sku]['c'] += 1
-                        guardar_carrito_db(uid, carrito_usuario)
-                        st.rerun()
-                        
-                    if cr4.button("🗑️", key=f"c_d_cart_{sku}"):
-                        del carrito_usuario[sku]
+                    if ci_save.button("💾", key=f"c_s_{sku}"):
+                        carrito_usuario[sku]['c'] = q_edit
                         guardar_carrito_db(uid, carrito_usuario)
                         st.rerun()
 
+                    if ci_del.button("🗑️", key=f"c_d_{sku}"):
+                        del carrito_usuario[sku]
+                        guardar_carrito_db(uid, carrito_usuario)
+                        st.rerun()
+                    
+                    cr4.write(f"**${(data['p'] * data['c']):.2f}**")
+
             st.markdown("---")
-            # [Cálculos de totales y envío de pedido...]
+            # --- CÁLCULOS FINALES ---
             metodo = st.radio("Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
+            # Descuentos: 30% divisas, 10% Bs si es >$100
             desc = (subtotal_v * 0.30) if metodo == "Divisas / Zelle" else ((subtotal_v * 0.10) if subtotal_v >= 100 else 0)
             total_f = subtotal_v - desc
             
-            st.write(f"Subtotal: ${subtotal_v:.2f} | Descuento: -${desc:.2f}")
-            st.header(f"Total: ${total_f:.2f}")
+            col_t1, col_t2 = st.columns(2)
+            col_t1.metric("Subtotal", f"${subtotal_v:.2f}")
+            col_t1.metric("Descuento", f"-${desc:.2f}")
+            col_t2.metric("TOTAL A PAGAR", f"${total_f:.2f}")
             
             if st.button("🏁 Confirmar y Enviar Pedido", type="primary", use_container_width=True):
                 conn.execute("""
@@ -390,7 +392,7 @@ else:
                 """, (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
                 conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
                 conn.commit()
-                st.success("¡Pedido registrado!")
+                st.success("¡Pedido enviado exitosamente!")
                 st.balloons()
                 st.rerun()
 
