@@ -386,22 +386,71 @@ else:
     # --- MÓDULO MIS PEDIDOS ---
     elif menu == "📜 Mis Pedidos":
         st.title("📜 Historial de Pedidos")
-        if user['rol'] != 'admin':
-            query = "SELECT * FROM pedidos WHERE username=? ORDER BY id DESC"
-            pedidos = pd.read_sql_query(query, conn, params=(uid,))
+        
+        # Consulta dinámica según el rol
+        query = "SELECT * FROM pedidos ORDER BY id DESC" if user['rol'] == 'admin' else f"SELECT * FROM pedidos WHERE username='{uid}' ORDER BY id DESC"
+        pedidos_df = pd.read_sql(query, conn)
+
+        if pedidos_df.empty:
+            st.info("No hay pedidos registrados aún.")
         else:
-            query = "SELECT * FROM pedidos ORDER BY id DESC"
-            pedidos = pd.read_sql_query(query, conn)
-            
-        if pedidos.empty: 
-            st.info("No se han registrado pedidos.")
-        else:
-            for _, p in pedidos.iterrows():
-                with st.expander(f"Pedido #{p['id']} - {p['fecha']} - {p['cliente_nombre']} (${p['total']:.2f})"):
-                    st.write(f"**Método:** {p['metodo_pago']} | **Status:** {p['status']}")
-                    st.json(json.loads(p['items']))
-                    pdf_data = generar_pdf_recibo(p, conn)
-                    st.download_button(f"📥 Descargar PDF #{p['id']}", pdf_data, f"pedido_{p['id']}.pdf", "application/pdf", key=f"pdf_{p['id']}")
+            for _, p_row in pedidos_df.iterrows():
+                # Encabezado del Expander con información clave
+                with st.expander(f"📦 Pedido #{p_row['id']} | {p_row['fecha']} | Total: ${p_row['total']:.2f}"):
+                    c1, c2, c3 = st.columns(3)
+                    
+                    # Color del estado dinámico
+                    status_color = "orange" if p_row['status'] == "Pendiente" else "blue" if p_row['status'] == "Pagado" else "green"
+                    
+                    c1.markdown(f"**Estado:** :{status_color}[{p_row['status']}]")
+                    c2.markdown(f"**Método:** {p_row['metodo_pago']}")
+                    c3.markdown(f"**Cliente:** {p_row['cliente_nombre']}")
+                    
+                    st.markdown("---")
+                    
+                    # Reconstrucción de la tabla de productos
+                    try:
+                        items_dict = json.loads(p_row['items'])
+                        tabla_lista = []
+                        for sku, d in items_dict.items():
+                            tabla_lista.append({
+                                "Artículo": f"{sku} - {d['desc']}",
+                                "Cant": d['c'],
+                                "Precio Unit.": f"${d['p']:.2f}",
+                                "Subtotal": f"${(d['c']*d['p']):.2f}"
+                            })
+                        st.table(pd.DataFrame(tabla_lista))
+                    except Exception as e:
+                        st.error("Error al leer los artículos del pedido.")
+                    
+                    # Totales alineados a la derecha
+                    col_b1, col_b2 = st.columns([2, 1])
+                    with col_b2:
+                        st.markdown(f"**Subtotal:** ${p_row['subtotal']:.2f}")
+                        st.markdown(f"**Descuento:** -${p_row['descuento']:.2f}")
+                        st.markdown(f"### Total: ${p_row['total']:.2f}")
+                    
+                    # Botones de Acción (PDF y Eliminar)
+                    col_acc1, col_acc2 = st.columns([2, 1])
+                    with col_acc1:
+                        try:
+                            pdf_bytes = generar_pdf_recibo(p_row, conn)
+                            st.download_button(
+                                label="📄 Descargar Recibo PDF",
+                                data=pdf_bytes,
+                                file_name=f"recibo_color_insumos_{p_row['id']}.pdf",
+                                mime="application/pdf",
+                                key=f"dl_mis_pedidos_{p_row['id']}"
+                            )
+                        except Exception as e:
+                            st.error(f"Error al generar PDF: {e}")
+
+                    with col_acc2:
+                        if user['rol'] == 'admin':
+                            if st.button(f"🗑️ Eliminar Pedido #{p_row['id']}", key=f"del_mp_{p_row['id']}", use_container_width=True):
+                                conn.execute("DELETE FROM pedidos WHERE id=?", (p_row['id'],))
+                                conn.commit()
+                                st.rerun()
 
     # --- MÓDULO VENTAS (ADMIN) - ACTUALIZADO ---
     elif menu == "📊 Ventas" and user['rol'] == 'admin':
