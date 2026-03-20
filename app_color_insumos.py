@@ -274,7 +274,7 @@ else:
             logout_persistent()
 
     # --- MÓDULO TIENDA ---
-if menu == "🛍️ Tienda":
+    if menu == "🛍️ Tienda":
     st.title("🛍️ Catálogo y Tienda")
     df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
     
