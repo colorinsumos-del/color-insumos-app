@@ -295,7 +295,7 @@ else:
             p_sel = st.number_input(f"Página", 1, total_p, 1)
             
             # --- NUEVO DISEÑO DE ITEM EN TIENDA ---
-for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
+    for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
     r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 3.0]) # Ajuste de anchos
     
     with r1:
@@ -344,7 +344,7 @@ for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
                 del carrito_usuario[row.sku]
                 guardar_carrito_db(uid, carrito_usuario); st.rerun()
                 
-    st.markdown("<hr style='margin:8px 0; border-color:#f0f0f0'>", unsafe_allow_html=True)style='margin:5px 0; border-color:#f5f5f5'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:8px 0; border-color:#f0f0f0'>", unsafe_allow_html=True)
 
     # --- MÓDULO CARRITO ---
     elif menu.startswith("🛒 Carrito"):
