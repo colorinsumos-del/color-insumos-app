@@ -274,7 +274,7 @@ else:
             logout_persistent()
 
     # --- MÓDULO TIENDA ---
-    if menu == "🛍️ Tienda":
+    elif menu == "🛍️ Tienda":
         st.title("🛍️ Catálogo y Tienda")
         df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
         
@@ -293,10 +293,18 @@ else:
             
             items_pag = 15
             total_p = (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0)
-            p_sel = st.number_input(f"Página", 1, max(1, total_p), 1)
+
+            # Sincronización de página entre arriba y abajo
+            if 'pag_actual' not in st.session_state:
+                st.session_state.pag_actual = 1
+
+            # Control Superior
+            p_sel = st.number_input(f"Página (Total: {total_p})", 1, max(1, total_p), st.session_state.pag_actual, key="p_top")
+            st.session_state.pag_actual = p_sel
 
             st.markdown("---")
 
+            # Listado de productos
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
                 r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 2.5])
                 
@@ -331,6 +339,13 @@ else:
                             guardar_carrito_db(uid, carrito_usuario)
                             st.rerun()
                 st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
+
+            # Control Inferior (Misma lógica para navegar al final)
+            st.markdown(" ")
+            p_sel_bot = st.number_input(f"Ir a página (Total: {total_p})", 1, max(1, total_p), st.session_state.pag_actual, key="p_bottom")
+            if p_sel_bot != st.session_state.pag_actual:
+                st.session_state.pag_actual = p_sel_bot
+                st.rerun()
 
     # --- MÓDULO CARRITO ---
     elif menu == "🛒 Carrito": # Antes decía menu.startswith("🛒 Carrito")
