@@ -355,10 +355,17 @@ else:
                     cant_actual = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
                     nueva_q = c_input.number_input("Cant", 1, 999, cant_actual, label_visibility="collapsed", key=f"t_q_{row.sku}")
 
+                    # --- Dentro del bucle de la TIENDA (Cuando presionan el botón 💾) ---
                     if c_add.button("💾", key=f"t_s_{row.sku}"):
-                        carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_q}
-                        guardar_carrito_db(uid, carrito_usuario)
-                        st.rerun()
+                    # Agregamos 'f': row.foto_path para guardar la ruta de la imagen
+                            carrito_usuario[row.sku] = {
+                            "desc": row.descripcion, 
+                            "p": row.precio, 
+                            "c": nueva_q, 
+                            "f": row.foto_path if hasattr(row, 'foto_path') else None # <--- NUEVO
+                            }
+                            guardar_carrito_db(uid, carrito_usuario)
+                            st.rerun()
                         
                     if c_del.button("🗑️", key=f"t_d_{row.sku}"):
                         if row.sku in carrito_usuario:
@@ -370,50 +377,87 @@ else:
             barra_navegacion("bottom")
                 
     # --- MÓDULO CARRITO ---
-    elif menu == "🛒 Carrito": # Antes decía menu.startswith("🛒 Carrito")
+    elif menu == "🛒 Carrito":
         st.title("🛒 Carrito de Compras")
         
         if not carrito_usuario:
             st.info("Tu carrito está vacío.")
         else:
+            # Encabezados de tabla opcionales
+            h0, h1, h2, h3, h4 = st.columns([1, 3.5, 1.5, 2.5, 1.2])
+            h1.caption("Producto")
+            h2.caption("Precio")
+            h3.caption("Cantidad")
+            h4.caption("Total")
+            st.markdown("---")
+
             for sku, data in list(carrito_usuario.items()):
                 with st.container():
-                    cr1, cr2, cr3, cr4 = st.columns([4, 2, 2.5, 1.2])
-                    cr1.write(f"**{sku}**\n{data['desc']}")
+                    # Añadimos cr0 para la imagen
+                    cr0, cr1, cr2, cr3, cr4 = st.columns([1, 3.5, 1.5, 2.5, 1.2])
+                    
+                    # --- MOSTRAR FOTO ---
+                    with cr0:
+                        # Buscamos la foto en los datos, si no existe usamos placeholder
+                        foto_path = data.get('f')
+                        if foto_path and os.path.exists(foto_path):
+                            st.image(foto_path, use_container_width=True)
+                        else:
+                            st.image("https://via.placeholder.com/80", use_container_width=True)
+
+                    with cr1:
+                        st.markdown(f"**{sku}**")
+                        st.markdown(f"<small>{data['desc']}</small>", unsafe_allow_html=True)
+                    
                     cr2.write(f"${data['p']:.2f}")
                     
+                    # --- CONTROLES DE CANTIDAD ---
                     ci_q, ci_s, ci_d = cr3.columns([1.2, 1, 1])
                     q_edit = ci_q.number_input("Cant", 1, 999, data['c'], label_visibility="collapsed", key=f"c_q_{sku}")
                     
-                    if ci_s.button("💾", key=f"c_save_{sku}"):
+                    if ci_s.button("💾", key=f"c_save_{sku}", help="Actualizar cantidad"):
                         carrito_usuario[sku]['c'] = q_edit
                         guardar_carrito_db(uid, carrito_usuario)
                         st.rerun()
 
-                    if ci_d.button("🗑️", key=f"c_del_{sku}"):
+                    if ci_d.button("🗑️", key=f"c_del_{sku}", help="Eliminar del carrito"):
                         del carrito_usuario[sku]
                         guardar_carrito_db(uid, carrito_usuario)
                         st.rerun()
                     
+                    # --- SUBTOTAL POR ITEM ---
                     cr4.write(f"**${(data['p'] * data['c']):.2f}**")
+                    st.markdown("<hr style='margin:5px 0; border-color:#f0f0f0'>", unsafe_allow_html=True)
 
-            st.markdown("---")
+            # --- CÁLCULOS FINALES ---
+            st.markdown("### Resumen del Pedido")
+            subtotal_v = sum(item['p'] * item['c'] for item in carrito_usuario.values())
+            
             metodo = st.radio("Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
+            
+            # Lógica de descuento
             desc = (subtotal_v * 0.30) if metodo == "Divisas / Zelle" else ((subtotal_v * 0.10) if subtotal_v >= 100 else 0)
             total_f = subtotal_v - desc
             
-            st.write(f"Subtotal: ${subtotal_v:.2f}")
-            st.write(f"Descuento: -${desc:.2f}")
-            st.header(f"Total: ${total_f:.2f}")
+            c_res1, c_res2 = st.columns(2)
+            with c_res1:
+                st.write(f"Subtotal: **${subtotal_v:.2f}**")
+                st.write(f"Descuento: **-${desc:.2f}**")
+            with c_res2:
+                st.header(f"Total: ${total_f:.2f}")
             
             if st.button("🏁 Confirmar y Enviar Pedido", type="primary", use_container_width=True):
+                # Guardar en base de datos
                 conn.execute("""
                     INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) 
                     VALUES (?,?,?,?,?,?,?,?,?)
                 """, (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
+                
+                # Limpiar carrito
                 conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
                 conn.commit()
-                st.success("¡Pedido registrado!")
+                
+                st.success("¡Pedido registrado exitosamente!")
                 st.balloons()
                 st.rerun()
 
