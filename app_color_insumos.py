@@ -284,23 +284,33 @@ else:
             # --- 1. FILTROS Y BÚSQUEDA ---
             c1, c2, c3 = st.columns([3, 4, 1])
             
-            # Agregamos 'key' para poder manipular los valores desde el botón Reset
-            f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()), key="filtro_categoria")
-            f_bus = c2.text_input("Buscar producto...", key="filtro_busqueda")
+            # Inicializar valores en session_state si no existen
+            if "filtro_categoria" not in st.session_state:
+                st.session_state.filtro_categoria = "Todos"
+            if "filtro_busqueda" not in st.session_state:
+                st.session_state.filtro_busqueda = ""
+
+            f_cat = c1.selectbox("Filtrar por Categoría", 
+                                 ["Todos"] + list(df_tienda['categoria'].unique()), 
+                                 key="filtro_categoria")
+            
+            f_bus = c2.text_input("Buscar producto...", 
+                                  key="filtro_busqueda")
             
             c3.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True) 
             
-            # BOTÓN RESET: Limpia todo y reinicia la tienda
-            if c3.button("🔄 Reset", use_container_width=True, help="Limpiar filtros y volver al inicio"):
+            # BOTÓN RESET CORREGIDO
+            if c3.button("🔄 Reset", use_container_width=True):
+                # Para evitar el error de StreamlitAPIException, reseteamos las keys
                 st.session_state.filtro_categoria = "Todos"
                 st.session_state.filtro_busqueda = ""
                 st.session_state.pag_actual = 1
-                # También reiniciamos los selectores numéricos si existen
-                if "go_top" in st.session_state: st.session_state.go_top = 1
-                if "go_bottom" in st.session_state: st.session_state.go_bottom = 1
+                # Limpiamos los selectores de página si existen
+                if "selector_directo" in st.session_state:
+                    st.session_state.selector_directo = 1
                 st.rerun()
 
-            # Aplicar filtros al DataFrame
+            # Aplicar filtros al DataFrame usando los valores actuales
             df_f = df_tienda.copy()
             if f_cat != "Todos": 
                 df_f = df_f[df_f['categoria'] == f_cat]
@@ -310,12 +320,19 @@ else:
             # --- 2. CÁLCULO DE PAGINACIÓN ---
             items_pag = 15
             total_p = max(1, (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0))
-            if 'pag_actual' not in st.session_state: st.session_state.pag_actual = 1
-            if st.session_state.pag_actual > total_p: st.session_state.pag_actual = total_p
+            
+            if 'pag_actual' not in st.session_state: 
+                st.session_state.pag_actual = 1
+            
+            if st.session_state.pag_actual > total_p: 
+                st.session_state.pag_actual = total_p
 
             # --- 3. SELECTOR DE PÁGINA INDEPENDIENTE ---
             col_espacio, col_sel = st.columns([6, 2])
-            p_ir = col_sel.number_input("Ir a la página:", min_value=1, max_value=total_p, value=st.session_state.pag_actual, key="selector_directo")
+            # Nota: Usamos value=st.session_state.pag_actual para que sea reactivo
+            p_ir = col_sel.number_input("Ir a la página:", min_value=1, max_value=total_p, 
+                                        value=st.session_state.pag_actual, key="selector_directo")
+            
             if p_ir != st.session_state.pag_actual:
                 st.session_state.pag_actual = p_ir
                 st.rerun()
@@ -329,7 +346,9 @@ else:
                 if col_nav[1].button("◀️", key=f"prev_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual <= 1)):
                     st.session_state.pag_actual -= 1
                     st.rerun()
+                
                 col_nav[2].markdown(f"<h3 style='text-align: center; margin: 0;'>Pág. {st.session_state.pag_actual} de {total_p}</h3>", unsafe_allow_html=True)
+                
                 if col_nav[3].button("▶️", key=f"next_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual >= total_p)):
                     st.session_state.pag_actual += 1
                     st.rerun()
@@ -342,6 +361,7 @@ else:
 
             # --- 5. LISTADO DE PRODUCTOS ---
             p_sel = st.session_state.pag_actual
+            # Mostrar rebanada del dataframe
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
                 r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) 
                 
