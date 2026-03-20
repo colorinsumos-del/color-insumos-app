@@ -65,6 +65,15 @@ st.markdown("""
     .desc-text { font-size: 0.8rem; color: #444; margin-bottom: 0; line-height: 1.1; }
     .in-cart-indicator { color: #28a745; font-weight: bold; font-size: 0.8rem; }
     
+    /* Nuevos estilos para la Tienda */
+    .sku-text { font-weight: bold; color: #1f77b4; font-size: 0.9rem; margin-bottom: 0px; }
+    
+    .cat-text { color: #888; font-size: 0.75rem; margin-top: -5px; display: block; }
+    
+    .desc-text-main { font-size: 1.1rem; font-weight: bold; color: #1f77b4; margin-bottom: 2px; line-height: 1.2; }
+    
+    .stNumberInput div div input { text-align: center; } /* Centrar número en el input */
+    
     /* Estilos para tablas de pedidos */
     .pedido-header {
         background-color: #f8f9fa;
@@ -285,34 +294,57 @@ else:
             total_p = (len(df) // items_pag) + (1 if len(df) % items_pag > 0 else 0)
             p_sel = st.number_input(f"Página", 1, total_p, 1)
             
-            for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
-                r1, r2, r3, r4 = st.columns([0.8, 4.5, 1.2, 2.5])
-                with r1:
-                    img = row.foto_path if row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/60"
-                    st.image(img)
-                with r2:
-                    st.markdown(f'<p class="sku-text">{row.sku} | {row.categoria}</p>', unsafe_allow_html=True)
-                    st.markdown(f'<p class="desc-text">{row.descripcion}</p>', unsafe_allow_html=True)
-                    if row.sku in carrito_usuario:
-                        st.markdown('<span class="in-cart-indicator">✅ En carrito</span>', unsafe_allow_html=True)
-                r3.markdown(f"#### ${row.precio:.2f}")
-                
-                b1, b2, b3, b4 = r4.columns([0.8, 1, 0.8, 1.2])
-                if b1.button("➖", key=f"t_m_{row.sku}"):
-                    if row.sku in carrito_usuario:
-                        if carrito_usuario[row.sku]['c'] > 1: carrito_usuario[row.sku]['c'] -= 1
-                        else: del carrito_usuario[row.sku]
-                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
-                b2.write(f"**{carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 0}**")
-                if b3.button("➕", key=f"t_p_{row.sku}"):
-                    if row.sku in carrito_usuario: carrito_usuario[row.sku]['c'] += 1
-                    else: carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": 1}
+            # --- NUEVO DISEÑO DE ITEM EN TIENDA ---
+for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
+    r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 3.0]) # Ajuste de anchos
+    
+    with r1:
+        img = row.foto_path if row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/60"
+        st.image(img)
+        
+    with r2:
+        # 1. Nombre del artículo arriba (Grande y color SKU)
+        st.markdown(f'<p class="desc-text-main">{row.descripcion}</p>', unsafe_allow_html=True)
+        # 2. SKU (Color actual) y Categoría (Gris) debajo
+        st.markdown(f'<span class="sku-text">{row.sku}</span> <span class="cat-text">{row.categoria}</span>', unsafe_allow_html=True)
+        
+        if row.sku in carrito_usuario:
+            st.markdown('<span class="in-cart-indicator">✅ En carrito</span>', unsafe_allow_html=True)
+            
+    r3.markdown(f"### ${row.precio:.2f}")
+    
+    # --- NUEVOS CONTROLES DE CANTIDAD ---
+    with r4:
+        c_btn1, c_input, c_btn2, c_add, c_del = st.columns([0.5, 1, 0.5, 1, 0.8])
+        
+        # Cantidad actual en el carrito o 1 por defecto para añadir
+        cant_actual = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
+        
+        if c_btn1.button("➖", key=f"t_m_{row.sku}"):
+            if row.sku in carrito_usuario:
+                if carrito_usuario[row.sku]['c'] > 1: 
+                    carrito_usuario[row.sku]['c'] -= 1
                     guardar_carrito_db(uid, carrito_usuario); st.rerun()
-                if b4.button("🗑️", key=f"t_del_{row.sku}"):
-                    if row.sku in carrito_usuario:
-                        del carrito_usuario[row.sku]
-                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
-                st.markdown("<hr style='margin:5px 0; border-color:#f5f5f5'>", unsafe_allow_html=True)
+
+        # Cuadro centrado para colocar cantidades
+        nueva_cant = c_input.number_input("Cant", min_value=1, value=cant_actual, label_visibility="collapsed", key=f"n_in_{row.sku}")
+        
+        if c_btn2.button("➕", key=f"t_p_{row.sku}"):
+            if row.sku in carrito_usuario:
+                carrito_usuario[row.sku]['c'] += 1
+                guardar_carrito_db(uid, carrito_usuario); st.rerun()
+
+        # Botón Añadir/Actualizar al lado de Eliminar
+        if c_add.button("💾", key=f"t_save_{row.sku}", help="Añadir o actualizar cantidad"):
+            carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_cant}
+            guardar_carrito_db(uid, carrito_usuario); st.rerun()
+            
+        if c_del.button("🗑️", key=f"t_del_{row.sku}"):
+            if row.sku in carrito_usuario:
+                del carrito_usuario[row.sku]
+                guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                
+    st.markdown("<hr style='margin:8px 0; border-color:#f0f0f0'>", unsafe_allow_html=True)style='margin:5px 0; border-color:#f5f5f5'>", unsafe_allow_html=True)
 
     # --- MÓDULO CARRITO ---
     elif menu.startswith("🛒 Carrito"):
