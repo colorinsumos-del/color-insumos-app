@@ -295,28 +295,30 @@ else:
             p_sel = st.number_input(f"Página", 1, total_p, 1)
             
             # --- NUEVO DISEÑO DE ITEM EN TIENDA ---
-    for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
-    r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 3.0]) # Ajuste de anchos
+    # Línea 298: El inicio del bucle
+for row in df.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
+    # Línea 299: Debe tener sangría (indentación)
+    r1, r2, r3, r4 = st.columns([0.8, 4.0, 1.2, 3.0]) 
     
     with r1:
         img = row.foto_path if row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/60"
         st.image(img)
         
     with r2:
-        # 1. Nombre del artículo arriba (Grande y color SKU)
+        # Nombre del artículo arriba (Grande y color SKU)
         st.markdown(f'<p class="desc-text-main">{row.descripcion}</p>', unsafe_allow_html=True)
-        # 2. SKU (Color actual) y Categoría (Gris) debajo
+        # SKU y Categoría debajo
         st.markdown(f'<span class="sku-text">{row.sku}</span> <span class="cat-text">{row.categoria}</span>', unsafe_allow_html=True)
         
         if row.sku in carrito_usuario:
             st.markdown('<span class="in-cart-indicator">✅ En carrito</span>', unsafe_allow_html=True)
             
+    # El resto de las líneas también deben mantener la misma sangría
     r3.markdown(f"### ${row.precio:.2f}")
     
-    # --- NUEVOS CONTROLES DE CANTIDAD ---
     with r4:
         c_btn1, c_input, c_btn2, c_add, c_del = st.columns([0.5, 1, 0.5, 1, 0.8])
-        
+            
         # Cantidad actual en el carrito o 1 por defecto para añadir
         cant_actual = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
         
