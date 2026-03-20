@@ -372,28 +372,42 @@ else:
         # --- MÓDULO CARRITO ---
     elif menu.startswith("🛒 Carrito"):
         st.title("🛒 Carrito de Compras")
+        
         if not carrito_usuario:
             st.info("Tu carrito está vacío.")
         else:
+            subtotal_v = 0 # Inicialización crítica
+            
             for sku, data in list(carrito_usuario.items()):
+                # Cálculo de subtotal en cada iteración
+                subtotal_v += data['p'] * data['c']
+                
                 with st.container():
                     cr1, cr2, cr3, cr4 = st.columns([4, 2, 2, 1])
                     cr1.write(f"**{sku}**\n{data['desc']}")
                     cr2.write(f"${data['p']:.2f}")
+                    
                     cb1, cb2, cb3 = cr3.columns([1, 1, 1])
                     if cb1.button("➖", key=f"c_m_{sku}"):
-                        if data['c'] > 1: carrito_usuario[sku]['c'] -= 1
-                        else: del carrito_usuario[sku]
+                        if data['c'] > 1:
+                            carrito_usuario[sku]['c'] -= 1
+                        else:
+                            del carrito_usuario[sku]
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                        
                     cb2.write(f"**{data['c']}**")
+                    
                     if cb3.button("➕", key=f"c_p_{sku}"):
                         carrito_usuario[sku]['c'] += 1
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                        
                     if cr4.button("🗑️", key=f"c_d_{sku}"):
                         del carrito_usuario[sku]
                         guardar_carrito_db(uid, carrito_usuario); st.rerun()
 
             st.markdown("---")
+            
+            # Selección de Pago y Descuentos
             metodo = st.radio("Seleccione Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
             desc = (subtotal_v * 0.30) if metodo == "Divisas / Zelle" else ((subtotal_v * 0.10) if subtotal_v >= 100 else 0)
             total_f = subtotal_v - desc
@@ -403,12 +417,17 @@ else:
             st.header(f"Total a Pagar: ${total_f:.2f}")
             
             if st.button("🏁 Confirmar y Enviar Pedido", type="primary", use_container_width=True):
-                conn.execute("INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) VALUES (?,?,?,?,?,?,?,?,?)",
-                             (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
+                fecha_pedido = datetime.now().strftime("%d/%m/%Y %H:%M")
+                conn.execute("""
+                    INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) 
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                """, (uid, user['nombre'], fecha_pedido, json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
+                
                 conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
                 conn.commit()
                 st.success("¡Pedido registrado con éxito!")
                 st.balloons()
+                st.rerun()
 
     elif menu == "📁 Carga":
         st.title("📁 Carga masiva de Catálogo")
