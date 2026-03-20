@@ -277,65 +277,67 @@ else:
     if menu == "🛍️ Tienda":
         st.title("🛍️ Catálogo y Tienda")
         
-        # Función de limpieza (Callback) para el botón Reset
-        def reset_filtros_callback():
-            st.session_state.filtro_categoria = "Todos"
-            st.session_state.filtro_busqueda = ""
-            st.session_state.pag_actual = 1
-            # Reseteamos también los selectores numéricos de página
-            if "go_top" in st.session_state: st.session_state.go_top = 1
-            if "go_bottom" in st.session_state: st.session_state.go_bottom = 1
-            if "selector_directo" in st.session_state: st.session_state.selector_directo = 1
+        # 1. INICIALIZACIÓN DE ESTADOS (Solo si no existen)
+        if 'f_cat_val' not in st.session_state: st.session_state.f_cat_val = "Todos"
+        if 'f_bus_val' not in st.session_state: st.session_state.f_bus_val = ""
+        if 'pag_actual' not in st.session_state: st.session_state.pag_actual = 1
 
         df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
         
         if df_tienda.empty:
             st.info("No hay productos registrados en la base de datos.")
         else:
-            # --- 1. FILTROS Y BÚSQUEDA ---
+            # --- 2. FILTROS Y BÚSQUEDA ---
             c1, c2, c3 = st.columns([3, 4, 1])
             
-            # Inicialización de estados para evitar errores de llave inexistente
-            if "filtro_categoria" not in st.session_state: st.session_state.filtro_categoria = "Todos"
-            if "filtro_busqueda" not in st.session_state: st.session_state.filtro_busqueda = ""
-            if "pag_actual" not in st.session_state: st.session_state.pag_actual = 1
+            # Selector de Categoría
+            cat_options = ["Todos"] + list(df_tienda['categoria'].unique())
+            # Buscamos el índice actual para que el selectbox no se mueva solo
+            try:
+                idx_cat = cat_options.index(st.session_state.f_cat_val)
+            except:
+                idx_cat = 0
 
-            f_cat = c1.selectbox("Filtrar por Categoría", 
-                                 ["Todos"] + list(df_tienda['categoria'].unique()), 
-                                 key="filtro_categoria")
-            
-            f_bus = c2.text_input("Buscar producto...", 
-                                  key="filtro_busqueda")
-            
-            # El botón Reset ahora usa el callback para limpiar de forma segura
+            f_cat = c1.selectbox("Filtrar por Categoría", cat_options, index=idx_cat)
+            st.session_state.f_cat_val = f_cat # Guardamos la elección
+
+            # Barra de Búsqueda
+            f_bus = c2.text_input("Buscar producto...", value=st.session_state.f_bus_val)
+            st.session_state.f_bus_val = f_bus # Guardamos el texto
+
+            # BOTÓN RESET (Limpia variables y reinicia)
             c3.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True) 
-            c3.button("🔄 Reset", on_click=reset_filtros_callback, use_container_width=True)
+            if c3.button("🔄 Reset", use_container_width=True):
+                st.session_state.f_cat_val = "Todos"
+                st.session_state.f_bus_val = ""
+                st.session_state.pag_actual = 1
+                st.rerun()
 
             # Aplicar filtros al DataFrame
             df_f = df_tienda.copy()
-            if f_cat != "Todos": 
-                df_f = df_f[df_f['categoria'] == f_cat]
-            if f_bus: 
-                df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
+            if st.session_state.f_cat_val != "Todos": 
+                df_f = df_f[df_f['categoria'] == st.session_state.f_cat_val]
+            if st.session_state.f_bus_val: 
+                df_f = df_f[df_f['descripcion'].str.contains(st.session_state.f_bus_val, case=False) | 
+                            df_f['sku'].str.contains(st.session_state.f_bus_val, case=False)]
             
-            # --- 2. CÁLCULO DE PAGINACIÓN ---
+            # --- 3. CÁLCULO DE PAGINACIÓN ---
             items_pag = 15
             total_p = max(1, (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0))
             
+            # Ajuste de seguridad para la página actual
             if st.session_state.pag_actual > total_p: 
                 st.session_state.pag_actual = total_p
 
-            # --- 3. SELECTOR DE PÁGINA INDEPENDIENTE ---
+            # --- 4. SELECTOR DE PÁGINA DIRECTO ---
+            # Se sincroniza con pag_actual sin causar conflictos
             col_espacio, col_sel = st.columns([6, 2])
-            p_ir = col_sel.number_input("Ir a la página:", 1, total_p, 
-                                        value=st.session_state.pag_actual, 
-                                        key="selector_directo")
-            
+            p_ir = col_sel.number_input("Ir a la página:", 1, total_p, value=st.session_state.pag_actual, key="num_pag_selector")
             if p_ir != st.session_state.pag_actual:
                 st.session_state.pag_actual = p_ir
                 st.rerun()
 
-            # --- 4. BARRAS DE NAVEGACIÓN ---
+            # --- 5. BARRAS DE NAVEGACIÓN (FUNCIONES LIMPIAS) ---
             def barra_navegacion(ubicacion):
                 col_nav = st.columns([1, 1, 2, 1, 1])
                 if col_nav[0].button("⏪", key=f"first_{ubicacion}", use_container_width=True):
@@ -354,10 +356,10 @@ else:
                     st.session_state.pag_actual = total_p
                     st.rerun()
 
-            barra_navegacion("top")
+            barra_nave_top = barra_navegacion("top")
             st.markdown("---")
 
-            # --- 5. LISTADO DE PRODUCTOS ---
+            # --- 6. LISTADO DE PRODUCTOS ---
             p_sel = st.session_state.pag_actual
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
                 r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) 
