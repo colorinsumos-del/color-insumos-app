@@ -243,20 +243,17 @@ else:
     subtotal_v = sum(d['p'] * d['c'] for d in carrito_usuario.values())
     cant_v = sum(d['c'] for d in carrito_usuario.values())
 
-    # --- NAVEGACIÓN LATERAL CON PERSISTENCIA ---
+    # --- NAVEGACIÓN LATERAL OPTIMIZADA ---
     with st.sidebar:
         st.header(f"👤 {user['nombre']}")
         
-        opc_base = ["🛍️ Tienda", f"🛒 Carrito ({cant_v})", "📜 Mis Pedidos"]
+        opc_base = ["🛍️ Tienda", "🛒 Carrito", "📜 Mis Pedidos"]
         opc_admin = ["📊 Ventas", "📁 Carga", "🖼️ Fotos", "👥 Usuarios"]
         opc = opc_base + opc_admin if user['rol'] == 'admin' else opc_base
 
-        if 'menu_idx' not in st.session_state:
-            st.session_state.menu_idx = 0
-
-        # Mantenemos la selección bloqueada para que no salte de menú
-        menu = st.radio("Navegación", opc, index=st.session_state.menu_idx)
-        st.session_state.menu_idx = opc.index(menu)
+        # Cambiamos el nombre del carrito para que no cambie dinámicamente en el menú
+        # Esto evita que el radio se reinicie cada vez que agregas algo
+        menu = st.radio("Navegación", opc, key="main_menu")
         
         st.markdown("### 💳 Resumen de Cuenta")
         with st.container():
@@ -336,7 +333,7 @@ else:
                 st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
 
     # --- MÓDULO CARRITO ---
-    elif menu.startswith("🛒 Carrito"):
+    elif menu == "🛒 Carrito": # Antes decía menu.startswith("🛒 Carrito")
         st.title("🛒 Carrito de Compras")
         
         if not carrito_usuario:
