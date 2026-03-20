@@ -283,17 +283,11 @@ else:
         else:
             # 1. FILTROS CON BOTÓN DE RESET
             c1, c2, c3 = st.columns([2, 3, 1])
+            f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()))
+            f_bus = c2.text_input("Buscar producto...")
             
-            # Usamos keys para poder resetear los widgets visualmente
-            f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()), key="filtro_cat")
-            f_bus = c2.text_input("Buscar producto...", key="filtro_bus")
-            
-            if c3.button("🔄 Reset", use_container_width=True, help="Limpiar todo y volver a pág. 1"):
-                st.session_state.filtro_cat = "Todos"
-                st.session_state.filtro_bus = ""
+            if c3.button("🔄 Reset", use_container_width=True):
                 st.session_state.pag_actual = 1
-                if "go_top" in st.session_state: st.session_state.go_top = 1
-                if "go_bottom" in st.session_state: st.session_state.go_bottom = 1
                 st.rerun()
 
             df_f = df_tienda.copy()
@@ -309,29 +303,18 @@ else:
             if st.session_state.pag_actual > total_p: st.session_state.pag_actual = total_p
 
             def barra_navegacion(ubicacion):
-                # 6 columnas para hacer espacio al selector numérico
-                col_nav = st.columns([0.5, 0.5, 1.5, 0.8, 0.5, 0.5])
-                
+                col_nav = st.columns([1, 1, 2, 1, 1])
                 if col_nav[0].button("⏪", key=f"first_{ubicacion}", use_container_width=True):
                     st.session_state.pag_actual = 1
                     st.rerun()
                 if col_nav[1].button("◀️", key=f"prev_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual <= 1)):
                     st.session_state.pag_actual -= 1
                     st.rerun()
-                
-                # Texto indicador
-                col_nav[2].markdown(f"<p style='text-align: center; margin-top: 10px; font-weight: bold;'>Pág. {st.session_state.pag_actual} de {total_p}</p>", unsafe_allow_html=True)
-                
-                # Selector de "Ir a página"
-                p_ir = col_nav[3].number_input("Ir a", 1, total_p, value=st.session_state.pag_actual, key=f"go_{ubicacion}", label_visibility="collapsed")
-                if p_ir != st.session_state.pag_actual:
-                    st.session_state.pag_actual = p_ir
-                    st.rerun()
-
-                if col_nav[4].button("▶️", key=f"next_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual >= total_p)):
+                col_nav[2].markdown(f"<h3 style='text-align: center; margin: 0;'>Pág. {st.session_state.pag_actual} de {total_p}</h3>", unsafe_allow_html=True)
+                if col_nav[3].button("▶️", key=f"next_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual >= total_p)):
                     st.session_state.pag_actual += 1
                     st.rerun()
-                if col_nav[5].button("⏩", key=f"last_{ubicacion}", use_container_width=True):
+                if col_nav[4].button("⏩", key=f"last_{ubicacion}", use_container_width=True):
                     st.session_state.pag_actual = total_p
                     st.rerun()
 
@@ -341,7 +324,7 @@ else:
             # --- PRODUCTOS (CON FOTOS MÁS GRANDES) ---
             p_sel = st.session_state.pag_actual
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
-                r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) 
+                r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) # r1 creció de 0.8 a 1.2
                 
                 with r1:
                     img = row.foto_path if hasattr(row, 'foto_path') and row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/100"
