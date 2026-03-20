@@ -274,31 +274,21 @@ else:
             logout_persistent()
 
     # --- MÓDULO TIENDA ---
-    if menu == "🛍️ Tienda":
+if menu == "🛍️ Tienda":
     st.title("🛍️ Catálogo y Tienda")
     df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
     
     if df_tienda.empty:
         st.info("No hay productos registrados en la base de datos.")
     else:
-        # --- FILTROS CON BOTÓN DE RESET ---
+        # 1. FILTROS CON BOTÓN DE RESET
         c1, c2, c3 = st.columns([2, 3, 1])
         
-        # Inicializar estados de filtros si no existen
-        if 'f_cat_val' not in st.session_state: st.session_state.f_cat_val = "Todos"
-        if 'f_bus_val' not in st.session_state: st.session_state.f_bus_val = ""
-
-        f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()), key="f_cat_widget")
-        f_bus = c2.text_input("Buscar producto...", key="f_bus_widget")
+        f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()))
+        f_bus = c2.text_input("Buscar producto...")
         
-        # Botón para limpiar todo
-        if c3.button("🔄 Reset", use_container_width=True, help="Limpiar filtros y volver al inicio"):
+        if c3.button("🔄 Reset", use_container_width=True):
             st.session_state.pag_actual = 1
-            # Para resetear widgets con llave, a veces es más limpio forzar el valor o usar st.rerun
-            # En este caso, simplemente reiniciamos la lógica de filtrado:
-            f_cat = "Todos"
-            f_bus = ""
-            # Nota: Para limpiar el texto visualmente usamos el rerun
             st.rerun()
 
         df_f = df_tienda.copy()
@@ -310,14 +300,9 @@ else:
         # --- LÓGICA DE PAGINACIÓN ---
         items_pag = 15
         total_p = max(1, (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0))
+        if 'pag_actual' not in st.session_state: st.session_state.pag_actual = 1
+        if st.session_state.pag_actual > total_p: st.session_state.pag_actual = total_p
 
-        if 'pag_actual' not in st.session_state:
-            st.session_state.pag_actual = 1
-        
-        if st.session_state.pag_actual > total_p:
-            st.session_state.pag_actual = total_p
-
-        # --- BARRA DE NAVEGACIÓN ---
         def barra_navegacion(ubicacion):
             col_nav = st.columns([1, 1, 2, 1, 1])
             if col_nav[0].button("⏪", key=f"first_{ubicacion}", use_container_width=True):
@@ -339,14 +324,13 @@ else:
 
         # --- LISTADO DE PRODUCTOS ---
         p_sel = st.session_state.pag_actual
-        # Ajustamos el ratio de columnas: 1.2 en lugar de 0.8 para dar más aire a la imagen
         for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
-            r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) 
+            # r1 sube a 1.2 para que la imagen sea más grande
+            r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5])
             
             with r1:
                 img = row.foto_path if hasattr(row, 'foto_path') and row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/100"
-                # El parámetro use_container_width=True hará que la imagen llene su columna (ahora más ancha)
-                st.image(img, use_container_width=True)
+                st.image(img, use_container_width=True) # La imagen crece al ancho de la columna
             
             with r2:
                 st.markdown(f'<p class="desc-text-main">{row.descripcion}</p>', unsafe_allow_html=True)
@@ -375,7 +359,6 @@ else:
                         st.rerun()
             st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
 
-        st.markdown(" ")
         barra_navegacion("bottom")
                 
     # --- MÓDULO CARRITO ---
