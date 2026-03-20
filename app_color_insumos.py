@@ -369,6 +369,101 @@ else:
                             
                 st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
 
+    elif menu.startswith("🛒 Carrito"):
+        st.title("🛒 Carrito de Compras")
+        
+        # 1. Recuperación forzada de la base de datos para asegurar que "haya algo" que mostrar
+        cursor = conn.execute("SELECT items FROM carritos WHERE username=?", (uid,))
+        fila_carrito = cursor.fetchone()
+        
+        if fila_carrito and fila_carrito[0]:
+            try:
+                carrito_usuario = json.loads(fila_carrito[0])
+            except:
+                carrito_usuario = {}
+        else:
+            carrito_usuario = {}
+
+        # 2. Verificación de contenido
+        if not carrito_usuario:
+            st.info("Aún no has añadido productos. Ve a la sección de Tienda para comenzar.")
+        else:
+            subtotal_v = 0
+            
+            # 3. Renderizado de productos
+            # Usamos list() para evitar errores de mutación al borrar items
+            for sku, data in list(carrito_usuario.items()):
+                # Validamos que existan los datos mínimos para no romper la pantalla
+                desc_item = data.get('desc', 'Sin descripción')
+                precio_item = float(data.get('p', 0))
+                cant_item = int(data.get('c', 1))
+                
+                subtotal_v += precio_item * cant_item
+                
+                with st.container():
+                    # Ajustamos columnas para que se vea bien en móviles y PC
+                    c_img, c_txt, c_controles, c_eliminar = st.columns([1, 4, 2, 1])
+                    
+                    with c_txt:
+                        st.markdown(f"**{sku}**")
+                        st.caption(desc_item)
+                        st.write(f"Precio: ${precio_item:.2f}")
+                    
+                    with c_controles:
+                        # Botones de ajuste rápido dentro del carrito
+                        col_m, col_n, col_p = st.columns([1, 1, 1])
+                        if col_m.button("➖", key=f"btn_minus_cart_{sku}"):
+                            if carrito_usuario[sku]['c'] > 1:
+                                carrito_usuario[sku]['c'] -= 1
+                            else:
+                                del carrito_usuario[sku]
+                            guardar_carrito_db(uid, carrito_usuario)
+                            st.rerun()
+                        
+                        col_n.write(f"**{cant_item}**")
+                        
+                        if col_p.button("➕", key=f"btn_plus_cart_{sku}"):
+                            carrito_usuario[sku]['c'] += 1
+                            guardar_carrito_db(uid, carrito_usuario)
+                            st.rerun()
+                    
+                    if c_eliminar.button("🗑️", key=f"btn_del_cart_{sku}"):
+                        del carrito_usuario[sku]
+                        guardar_carrito_db(uid, carrito_usuario)
+                        st.rerun()
+                
+                st.markdown("<hr style='margin:10px 0; border-color:#eee'>", unsafe_allow_html=True)
+            
+            # --- SECCIÓN DE TOTALES ---
+            st.sidebar.markdown("### Resumen")
+            metodo = st.sidebar.radio("Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"])
+            
+            # Tu lógica de descuentos de Color Insumos
+            descuento = 0
+            if metodo == "Divisas / Zelle":
+                descuento = subtotal_v * 0.30
+            elif subtotal_v >= 100:
+                descuento = subtotal_v * 0.10
+            
+            total_final = subtotal_v - descuento
+            
+            st.sidebar.write(f"Subtotal: ${subtotal_v:.2f}")
+            st.sidebar.write(f"Descuento: -${descuento:.2f}")
+            st.sidebar.subheader(f"Total: ${total_final:.2f}")
+            
+            if st.sidebar.button("🏁 Confirmar Pedido", type="primary", use_container_width=True):
+                fecha_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+                conn.execute("""
+                    INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (uid, user['nombre'], fecha_str, json.dumps(carrito_usuario), metodo, subtotal_v, descuento, total_final, "Pendiente"))
+                
+                conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
+                conn.commit()
+                st.success("¡Pedido enviado correctamente!")
+                st.balloons()
+                st.rerun()
+
     # --- MÓDULO MIS PEDIDOS ---
     elif menu == "📜 Mis Pedidos":
         st.title("📜 Historial de Pedidos")
