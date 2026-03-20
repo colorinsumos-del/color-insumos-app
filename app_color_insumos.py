@@ -276,6 +276,17 @@ else:
     # --- MÓDULO TIENDA ---
     if menu == "🛍️ Tienda":
         st.title("🛍️ Catálogo y Tienda")
+        
+        # Función de limpieza (Callback) para el botón Reset
+        def reset_filtros_callback():
+            st.session_state.filtro_categoria = "Todos"
+            st.session_state.filtro_busqueda = ""
+            st.session_state.pag_actual = 1
+            # Reseteamos también los selectores numéricos de página
+            if "go_top" in st.session_state: st.session_state.go_top = 1
+            if "go_bottom" in st.session_state: st.session_state.go_bottom = 1
+            if "selector_directo" in st.session_state: st.session_state.selector_directo = 1
+
         df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
         
         if df_tienda.empty:
@@ -284,11 +295,10 @@ else:
             # --- 1. FILTROS Y BÚSQUEDA ---
             c1, c2, c3 = st.columns([3, 4, 1])
             
-            # Inicializar valores en session_state si no existen
-            if "filtro_categoria" not in st.session_state:
-                st.session_state.filtro_categoria = "Todos"
-            if "filtro_busqueda" not in st.session_state:
-                st.session_state.filtro_busqueda = ""
+            # Inicialización de estados para evitar errores de llave inexistente
+            if "filtro_categoria" not in st.session_state: st.session_state.filtro_categoria = "Todos"
+            if "filtro_busqueda" not in st.session_state: st.session_state.filtro_busqueda = ""
+            if "pag_actual" not in st.session_state: st.session_state.pag_actual = 1
 
             f_cat = c1.selectbox("Filtrar por Categoría", 
                                  ["Todos"] + list(df_tienda['categoria'].unique()), 
@@ -297,20 +307,11 @@ else:
             f_bus = c2.text_input("Buscar producto...", 
                                   key="filtro_busqueda")
             
+            # El botón Reset ahora usa el callback para limpiar de forma segura
             c3.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True) 
-            
-            # BOTÓN RESET CORREGIDO
-            if c3.button("🔄 Reset", use_container_width=True):
-                # Para evitar el error de StreamlitAPIException, reseteamos las keys
-                st.session_state.filtro_categoria = "Todos"
-                st.session_state.filtro_busqueda = ""
-                st.session_state.pag_actual = 1
-                # Limpiamos los selectores de página si existen
-                if "selector_directo" in st.session_state:
-                    st.session_state.selector_directo = 1
-                st.rerun()
+            c3.button("🔄 Reset", on_click=reset_filtros_callback, use_container_width=True)
 
-            # Aplicar filtros al DataFrame usando los valores actuales
+            # Aplicar filtros al DataFrame
             df_f = df_tienda.copy()
             if f_cat != "Todos": 
                 df_f = df_f[df_f['categoria'] == f_cat]
@@ -321,17 +322,14 @@ else:
             items_pag = 15
             total_p = max(1, (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0))
             
-            if 'pag_actual' not in st.session_state: 
-                st.session_state.pag_actual = 1
-            
             if st.session_state.pag_actual > total_p: 
                 st.session_state.pag_actual = total_p
 
             # --- 3. SELECTOR DE PÁGINA INDEPENDIENTE ---
             col_espacio, col_sel = st.columns([6, 2])
-            # Nota: Usamos value=st.session_state.pag_actual para que sea reactivo
-            p_ir = col_sel.number_input("Ir a la página:", min_value=1, max_value=total_p, 
-                                        value=st.session_state.pag_actual, key="selector_directo")
+            p_ir = col_sel.number_input("Ir a la página:", 1, total_p, 
+                                        value=st.session_state.pag_actual, 
+                                        key="selector_directo")
             
             if p_ir != st.session_state.pag_actual:
                 st.session_state.pag_actual = p_ir
@@ -361,7 +359,6 @@ else:
 
             # --- 5. LISTADO DE PRODUCTOS ---
             p_sel = st.session_state.pag_actual
-            # Mostrar rebanada del dataframe
             for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
                 r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) 
                 
