@@ -369,242 +369,46 @@ else:
                             
                 st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
 
+        # --- MÓDULO CARRITO ---
     elif menu.startswith("🛒 Carrito"):
         st.title("🛒 Carrito de Compras")
-        
-        # 1. Recuperación forzada de la base de datos para asegurar que "haya algo" que mostrar
-        cursor = conn.execute("SELECT items FROM carritos WHERE username=?", (uid,))
-        fila_carrito = cursor.fetchone()
-        
-        if fila_carrito and fila_carrito[0]:
-            try:
-                carrito_usuario = json.loads(fila_carrito[0])
-            except:
-                carrito_usuario = {}
-        else:
-            carrito_usuario = {}
-
-        # 2. Verificación de contenido
         if not carrito_usuario:
-            st.info("Aún no has añadido productos. Ve a la sección de Tienda para comenzar.")
+            st.info("Tu carrito está vacío.")
         else:
-            subtotal_v = 0
-            
-            # 3. Renderizado de productos
-            # Usamos list() para evitar errores de mutación al borrar items
             for sku, data in list(carrito_usuario.items()):
-                # Validamos que existan los datos mínimos para no romper la pantalla
-                desc_item = data.get('desc', 'Sin descripción')
-                precio_item = float(data.get('p', 0))
-                cant_item = int(data.get('c', 1))
-                
-                subtotal_v += precio_item * cant_item
-                
                 with st.container():
-                    # Ajustamos columnas para que se vea bien en móviles y PC
-                    c_img, c_txt, c_controles, c_eliminar = st.columns([1, 4, 2, 1])
-                    
-                    with c_txt:
-                        st.markdown(f"**{sku}**")
-                        st.caption(desc_item)
-                        st.write(f"Precio: ${precio_item:.2f}")
-                    
-                    with c_controles:
-                        # Botones de ajuste rápido dentro del carrito
-                        col_m, col_n, col_p = st.columns([1, 1, 1])
-                        if col_m.button("➖", key=f"btn_minus_cart_{sku}"):
-                            if carrito_usuario[sku]['c'] > 1:
-                                carrito_usuario[sku]['c'] -= 1
-                            else:
-                                del carrito_usuario[sku]
-                            guardar_carrito_db(uid, carrito_usuario)
-                            st.rerun()
-                        
-                        col_n.write(f"**{cant_item}**")
-                        
-                        if col_p.button("➕", key=f"btn_plus_cart_{sku}"):
-                            carrito_usuario[sku]['c'] += 1
-                            guardar_carrito_db(uid, carrito_usuario)
-                            st.rerun()
-                    
-                    if c_eliminar.button("🗑️", key=f"btn_del_cart_{sku}"):
+                    cr1, cr2, cr3, cr4 = st.columns([4, 2, 2, 1])
+                    cr1.write(f"**{sku}**\n{data['desc']}")
+                    cr2.write(f"${data['p']:.2f}")
+                    cb1, cb2, cb3 = cr3.columns([1, 1, 1])
+                    if cb1.button("➖", key=f"c_m_{sku}"):
+                        if data['c'] > 1: carrito_usuario[sku]['c'] -= 1
+                        else: del carrito_usuario[sku]
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                    cb2.write(f"**{data['c']}**")
+                    if cb3.button("➕", key=f"c_p_{sku}"):
+                        carrito_usuario[sku]['c'] += 1
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
+                    if cr4.button("🗑️", key=f"c_d_{sku}"):
                         del carrito_usuario[sku]
-                        guardar_carrito_db(uid, carrito_usuario)
-                        st.rerun()
-                
-                st.markdown("<hr style='margin:10px 0; border-color:#eee'>", unsafe_allow_html=True)
+                        guardar_carrito_db(uid, carrito_usuario); st.rerun()
+
+            st.markdown("---")
+            metodo = st.radio("Seleccione Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"], horizontal=True)
+            desc = (subtotal_v * 0.30) if metodo == "Divisas / Zelle" else ((subtotal_v * 0.10) if subtotal_v >= 100 else 0)
+            total_f = subtotal_v - desc
             
-            # --- SECCIÓN DE TOTALES ---
-            st.sidebar.markdown("### Resumen")
-            metodo = st.sidebar.radio("Método de Pago:", ["Bolívares (BCV)", "Divisas / Zelle"])
+            st.write(f"Subtotal: ${subtotal_v:.2f}")
+            st.write(f"Descuento Aplicado: -${desc:.2f}")
+            st.header(f"Total a Pagar: ${total_f:.2f}")
             
-            # Tu lógica de descuentos de Color Insumos
-            descuento = 0
-            if metodo == "Divisas / Zelle":
-                descuento = subtotal_v * 0.30
-            elif subtotal_v >= 100:
-                descuento = subtotal_v * 0.10
-            
-            total_final = subtotal_v - descuento
-            
-            st.sidebar.write(f"Subtotal: ${subtotal_v:.2f}")
-            st.sidebar.write(f"Descuento: -${descuento:.2f}")
-            st.sidebar.subheader(f"Total: ${total_final:.2f}")
-            
-            if st.sidebar.button("🏁 Confirmar Pedido", type="primary", use_container_width=True):
-                fecha_str = datetime.now().strftime("%d/%m/%Y %H:%M")
-                conn.execute("""
-                    INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (uid, user['nombre'], fecha_str, json.dumps(carrito_usuario), metodo, subtotal_v, descuento, total_final, "Pendiente"))
-                
+            if st.button("🏁 Confirmar y Enviar Pedido", type="primary", use_container_width=True):
+                conn.execute("INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) VALUES (?,?,?,?,?,?,?,?,?)",
+                             (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
                 conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
                 conn.commit()
-                st.success("¡Pedido enviado correctamente!")
+                st.success("¡Pedido registrado con éxito!")
                 st.balloons()
-                st.rerun()
-                
-    # --- MÓDULO MIS PEDIDOS ---
-    elif menu == "📜 Mis Pedidos":
-        st.title("📜 Historial de Pedidos")
-        query = "SELECT * FROM pedidos ORDER BY id DESC" if user['rol'] == 'admin' else f"SELECT * FROM pedidos WHERE username='{uid}' ORDER BY id DESC"
-        pedidos_df = pd.read_sql(query, conn)
-
-        if pedidos_df.empty:
-            st.info("No hay pedidos registrados aún.")
-        else:
-            for _, p_row in pedidos_df.iterrows():
-                with st.expander(f"📦 Pedido #{p_row['id']} | {p_row['fecha']} | Total: ${p_row['total']:.2f}"):
-                    c1, c2, c3 = st.columns(3)
-                    status_color = "orange" if p_row['status'] == "Pendiente" else "green"
-                    c1.markdown(f"**Estado:** :{status_color}[{p_row['status']}]")
-                    c2.markdown(f"**Método:** {p_row['metodo_pago']}")
-                    c3.markdown(f"**Cliente:** {p_row['cliente_nombre']}")
-                    
-                    st.markdown("---")
-                    items_dict = json.loads(p_row['items'])
-                    tabla_lista = []
-                    for sku, d in items_dict.items():
-                        tabla_lista.append({
-                            "Artículo": f"{sku} - {d['desc']}",
-                            "Cant": d['c'],
-                            "Precio Unit.": f"${d['p']:.2f}",
-                            "Subtotal": f"${(d['c']*d['p']):.2f}"
-                        })
-                    st.table(pd.DataFrame(tabla_lista))
-                    
-                    col_b1, col_b2 = st.columns([2, 1])
-                    with col_b2:
-                        st.markdown(f"**Subtotal:** ${p_row['subtotal']:.2f}")
-                        st.markdown(f"**Descuento:** -${p_row['descuento']:.2f}")
-                        st.markdown(f"### Total: ${p_row['total']:.2f}")
-                    
-                    try:
-                        pdf_bytes = generar_pdf_recibo(p_row, conn)
-                        st.download_button(
-                            label="📄 Descargar Recibo PDF",
-                            data=pdf_bytes,
-                            file_name=f"recibo_color_insumos_{p_row['id']}.pdf",
-                            mime="application/pdf",
-                            key=f"pdf_{p_row['id']}"
-                        )
-                    except Exception as e:
-                        st.error(f"Error al generar PDF: {e}")
-
-                    if user['rol'] == 'admin':
-                        if st.button(f"🗑️ Eliminar Pedido #{p_row['id']}", key=f"del_{p_row['id']}"):
-                            conn.execute("DELETE FROM pedidos WHERE id=?", (p_row['id'],))
-                            conn.commit()
-                            st.rerun()
-
-    # --- ADMINISTRACIÓN ---
-    elif menu == "📊 Ventas":
-        st.title("📊 Panel de Control de Ventas")
-
-        # --- 1. RESUMEN DE MÉTRICAS ---
-        df_ventas = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", conn)
-        
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Total Pedidos", len(df_ventas))
-        with c2:
-            total_usd = df_ventas['total'].sum()
-            st.metric("Ventas Totales", f"${total_usd:,.2f}")
-        with c3:
-            pendientes = len(df_ventas[df_ventas['status'] == 'Pendiente'])
-            st.metric("Por Entregar", pendientes, delta_color="inverse")
-
-        st.markdown("---")
-
-        # --- 2. FILTROS DE BÚSQUEDA ---
-        col_f1, col_f2 = st.columns([2, 2])
-        search_cli = col_f1.text_input("🔍 Buscar por Cliente o ID")
-        status_filter = col_f2.selectbox("Filtrar por Estado", ["Todos", "Pendiente", "Pagado", "Entregado", "Anulado"])
-
-        query_v = "SELECT * FROM pedidos WHERE 1=1"
-        params_v = []
-
-        if status_filter != "Todos":
-            query_v += " AND status = ?"
-            params_v.append(status_filter)
-        if search_cli:
-            query_v += " AND (cliente_nombre LIKE ? OR id LIKE ?)"
-            params_v.extend([f"%{search_cli}%", f"%{search_cli}%"])
-        
-        df_filtrado = pd.read_sql(query_v + " ORDER BY id DESC", conn, params=params_v)
-
-        # --- 3. LISTADO DINÁMICO ---
-        if df_filtrado.empty:
-            st.warning("No se encontraron registros.")
-        else:
-            for _, v_row in df_filtrado.iterrows():
-                # Color del estado
-                color = "orange" if v_row['status'] == "Pendiente" else "green" if v_row['status'] == "Entregado" else "blue"
-                
-                with st.container():
-                    # Encabezado del pedido
-                    col_id, col_info, col_status, col_actions = st.columns([1, 4, 2, 2])
-                    
-                    col_id.subheader(f"#{v_row['id']}")
-                    
-                    with col_info:
-                        st.markdown(f"**Cliente:** {v_row['cliente_nombre']} | **Fecha:** {v_row['fecha']}")
-                        st.markdown(f"**Total:** `${v_row['total']:.2f}` | **Pago:** {v_row['metodo_pago']}")
-                    
-                    with col_status:
-                        # Selector para cambiar el estado en tiempo real
-                        nuevo_estado = st.selectbox(
-                            "Estado", 
-                            ["Pendiente", "Pagado", "Entregado", "Anulado"], 
-                            index=["Pendiente", "Pagado", "Entregado", "Anulado"].index(v_row['status']),
-                            key=f"status_{v_row['id']}"
-                        )
-                        if nuevo_estado != v_row['status']:
-                            conn.execute("UPDATE pedidos SET status=? WHERE id=?", (nuevo_estado, v_row['id']))
-                            conn.commit()
-                            st.rerun()
-
-                    with col_actions:
-                        # Botón para descargar el PDF que ya habías programado
-                        try:
-                            pdf_b = generar_pdf_recibo(v_row, conn)
-                            st.download_button("📄 PDF", pdf_b, f"Pedido_{v_row['id']}.pdf", "application/pdf", key=f"dl_{v_row['id']}")
-                        except:
-                            st.error("Error PDF")
-                        
-                        # Botón para borrar (con confirmación implícita por ser admin)
-                        if st.button("🗑️", key=f"del_v_{v_row['id']}"):
-                            conn.execute("DELETE FROM pedidos WHERE id=?", (v_row['id'],))
-                            conn.commit()
-                            st.rerun()
-                
-                # Detalle de productos dentro de un expander para no ocupar espacio
-                with st.expander("Ver detalles del pedido"):
-                    items = json.loads(v_row['items'])
-                    for sku, d in items.items():
-                        st.write(f"- **{d['c']}x** {sku} ({d['desc']}) - ${d['p']:.2f} c/u")
-                
-                st.markdown("<hr style='margin:10px 0; border-color:#eee'>", unsafe_allow_html=True)
 
     elif menu == "📁 Carga":
         st.title("📁 Carga masiva de Catálogo")
