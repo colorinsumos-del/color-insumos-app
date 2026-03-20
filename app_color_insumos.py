@@ -274,92 +274,89 @@ else:
             logout_persistent()
 
     # --- MÓDULO TIENDA ---
-if menu == "🛍️ Tienda":
-    st.title("🛍️ Catálogo y Tienda")
-    df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
-    
-    if df_tienda.empty:
-        st.info("No hay productos registrados en la base de datos.")
-    else:
-        # 1. FILTROS CON BOTÓN DE RESET
-        c1, c2, c3 = st.columns([2, 3, 1])
+    if menu == "🛍️ Tienda":
+        st.title("🛍️ Catálogo y Tienda")
+        df_tienda = pd.read_sql_query("SELECT * FROM productos", conn)
         
-        f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()))
-        f_bus = c2.text_input("Buscar producto...")
-        
-        if c3.button("🔄 Reset", use_container_width=True):
-            st.session_state.pag_actual = 1
-            st.rerun()
-
-        df_f = df_tienda.copy()
-        if f_cat != "Todos": 
-            df_f = df_f[df_f['categoria'] == f_cat]
-        if f_bus: 
-            df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
-        
-        # --- LÓGICA DE PAGINACIÓN ---
-        items_pag = 15
-        total_p = max(1, (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0))
-        if 'pag_actual' not in st.session_state: st.session_state.pag_actual = 1
-        if st.session_state.pag_actual > total_p: st.session_state.pag_actual = total_p
-
-        def barra_navegacion(ubicacion):
-            col_nav = st.columns([1, 1, 2, 1, 1])
-            if col_nav[0].button("⏪", key=f"first_{ubicacion}", use_container_width=True):
+        if df_tienda.empty:
+            st.info("No hay productos registrados en la base de datos.")
+        else:
+            # 1. FILTROS CON BOTÓN DE RESET
+            c1, c2, c3 = st.columns([2, 3, 1])
+            f_cat = c1.selectbox("Filtrar por Categoría", ["Todos"] + list(df_tienda['categoria'].unique()))
+            f_bus = c2.text_input("Buscar producto...")
+            
+            if c3.button("🔄 Reset", use_container_width=True):
                 st.session_state.pag_actual = 1
                 st.rerun()
-            if col_nav[1].button("◀️", key=f"prev_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual <= 1)):
-                st.session_state.pag_actual -= 1
-                st.rerun()
-            col_nav[2].markdown(f"<h3 style='text-align: center; margin: 0;'>Pág. {st.session_state.pag_actual} de {total_p}</h3>", unsafe_allow_html=True)
-            if col_nav[3].button("▶️", key=f"next_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual >= total_p)):
-                st.session_state.pag_actual += 1
-                st.rerun()
-            if col_nav[4].button("⏩", key=f"last_{ubicacion}", use_container_width=True):
-                st.session_state.pag_actual = total_p
-                st.rerun()
 
-        barra_navegacion("top")
-        st.markdown("---")
-
-        # --- LISTADO DE PRODUCTOS ---
-        p_sel = st.session_state.pag_actual
-        for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
-            # r1 sube a 1.2 para que la imagen sea más grande
-            r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5])
+            df_f = df_tienda.copy()
+            if f_cat != "Todos": 
+                df_f = df_f[df_f['categoria'] == f_cat]
+            if f_bus: 
+                df_f = df_f[df_f['descripcion'].str.contains(f_bus, case=False) | df_f['sku'].str.contains(f_bus, case=False)]
             
-            with r1:
-                img = row.foto_path if hasattr(row, 'foto_path') and row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/100"
-                st.image(img, use_container_width=True) # La imagen crece al ancho de la columna
-            
-            with r2:
-                st.markdown(f'<p class="desc-text-main">{row.descripcion}</p>', unsafe_allow_html=True)
-                st.markdown(f'<span class="cat-text">{row.sku} | {row.categoria}</span>', unsafe_allow_html=True)
-                if row.sku in carrito_usuario:
-                    st.markdown(f'<span class="in-cart-indicator">✅ En carrito: {carrito_usuario[row.sku]["c"]} und.</span>', unsafe_allow_html=True)
+            # --- PAGINACIÓN ---
+            items_pag = 15
+            total_p = max(1, (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0))
+            if 'pag_actual' not in st.session_state: st.session_state.pag_actual = 1
+            if st.session_state.pag_actual > total_p: st.session_state.pag_actual = total_p
 
-            with r3:
-                st.markdown(f"### ${row.precio:.2f}")
-
-            with r4:
-                c_input, c_add, c_del = st.columns([1.2, 1, 0.8])
-                cant_actual = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
-                nueva_q = c_input.number_input("Cant", 1, 999, cant_actual, label_visibility="collapsed", key=f"t_q_{row.sku}")
-
-                if c_add.button("💾", key=f"t_s_{row.sku}"):
-                    carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_q}
-                    guardar_carrito_db(uid, carrito_usuario)
-                    st.toast(f"Actualizado: {row.descripcion}")
+            def barra_navegacion(ubicacion):
+                col_nav = st.columns([1, 1, 2, 1, 1])
+                if col_nav[0].button("⏪", key=f"first_{ubicacion}", use_container_width=True):
+                    st.session_state.pag_actual = 1
                     st.rerun()
-                    
-                if c_del.button("🗑️", key=f"t_d_{row.sku}"):
+                if col_nav[1].button("◀️", key=f"prev_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual <= 1)):
+                    st.session_state.pag_actual -= 1
+                    st.rerun()
+                col_nav[2].markdown(f"<h3 style='text-align: center; margin: 0;'>Pág. {st.session_state.pag_actual} de {total_p}</h3>", unsafe_allow_html=True)
+                if col_nav[3].button("▶️", key=f"next_{ubicacion}", use_container_width=True, disabled=(st.session_state.pag_actual >= total_p)):
+                    st.session_state.pag_actual += 1
+                    st.rerun()
+                if col_nav[4].button("⏩", key=f"last_{ubicacion}", use_container_width=True):
+                    st.session_state.pag_actual = total_p
+                    st.rerun()
+
+            barra_navegacion("top")
+            st.markdown("---")
+
+            # --- PRODUCTOS (CON FOTOS MÁS GRANDES) ---
+            p_sel = st.session_state.pag_actual
+            for row in df_f.iloc[(p_sel-1)*items_pag : p_sel*items_pag].itertuples():
+                r1, r2, r3, r4 = st.columns([1.2, 3.6, 1.2, 2.5]) # r1 creció de 0.8 a 1.2
+                
+                with r1:
+                    img = row.foto_path if hasattr(row, 'foto_path') and row.foto_path and os.path.exists(row.foto_path) else "https://via.placeholder.com/100"
+                    st.image(img, use_container_width=True)
+                
+                with r2:
+                    st.markdown(f'<p class="desc-text-main">{row.descripcion}</p>', unsafe_allow_html=True)
+                    st.markdown(f'<span class="cat-text">{row.sku} | {row.categoria}</span>', unsafe_allow_html=True)
                     if row.sku in carrito_usuario:
-                        del carrito_usuario[row.sku]
+                        st.markdown(f'<span class="in-cart-indicator">✅ En carrito: {carrito_usuario[row.sku]["c"]} und.</span>', unsafe_allow_html=True)
+
+                with r3:
+                    st.markdown(f"### ${row.precio:.2f}")
+
+                with r4:
+                    c_input, c_add, c_del = st.columns([1.2, 1, 0.8])
+                    cant_actual = carrito_usuario[row.sku]['c'] if row.sku in carrito_usuario else 1
+                    nueva_q = c_input.number_input("Cant", 1, 999, cant_actual, label_visibility="collapsed", key=f"t_q_{row.sku}")
+
+                    if c_add.button("💾", key=f"t_s_{row.sku}"):
+                        carrito_usuario[row.sku] = {"desc": row.descripcion, "p": row.precio, "c": nueva_q}
                         guardar_carrito_db(uid, carrito_usuario)
                         st.rerun()
-            st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
+                        
+                    if c_del.button("🗑️", key=f"t_d_{row.sku}"):
+                        if row.sku in carrito_usuario:
+                            del carrito_usuario[row.sku]
+                            guardar_carrito_db(uid, carrito_usuario)
+                            st.rerun()
+                st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
 
-        barra_navegacion("bottom")
+            barra_navegacion("bottom")
                 
     # --- MÓDULO CARRITO ---
     elif menu == "🛒 Carrito": # Antes decía menu.startswith("🛒 Carrito")
