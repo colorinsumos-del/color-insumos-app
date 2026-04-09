@@ -6,6 +6,7 @@ import sqlite3
 import os
 import io
 import shutil
+# --- LIBRERÍA PARA LA NUBE ---
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURACIÓN DE RUTAS ---
@@ -16,7 +17,7 @@ if not os.path.exists(IMG_DIR):
 
 st.set_page_config(page_title="Catálogo Color Insumos", layout="wide")
 
-# --- INICIALIZACIÓN DEL ESTADO ---
+# --- INICIALIZACIÓN DEL ESTADO (Evita errores de carga) ---
 if 'carrito' not in st.session_state: 
     st.session_state.carrito = {}
 
@@ -96,15 +97,15 @@ def procesar_pdf_a_db(pdf_file):
 init_db()
 df_cat = cargar_catalogo()
 
-# --- MENÚ LATERAL (Estructura Original) ---
+# --- MENÚ LATERAL (Estructura Original Solicitada) ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3081/3081840.png", width=100)
     
-    # 1. MENÚ ADMINISTRADOR
-    st.title("Panel de Control")
-    with st.expander("🔐 Acceso Administrador"):
+    # 1. MENÚ ADMINISTRADOR (Clave actualizada a 20880157)
+    st.title("Panel Administrador")
+    with st.expander("🔐 Acceder"):
         clave = st.text_input("Contraseña", type="password")
-        if clave == "color2026":
+        if clave == "20880157":
             nuevo_pdf = st.file_uploader("Actualizar Lista PDF", type="pdf")
             if nuevo_pdf and st.button("🔄 Sincronizar Catálogo"):
                 df_n = procesar_pdf_a_db(nuevo_pdf)
@@ -112,10 +113,10 @@ with st.sidebar:
                 st.success("¡Catálogo actualizado!")
                 st.rerun()
 
-    # 2. MENÚ CLIENTE (CARRITO)
+    # 2. MENÚ COMPRADOR (Resumen de Carrito)
     if st.session_state.carrito:
         st.divider()
-        st.subheader("🛒 Tu Pedido")
+        st.subheader("🛒 Tu Carrito")
         nombre_cliente = st.text_input("Nombre / Empresa", key="cliente_nombre")
         
         total = 0
@@ -128,27 +129,27 @@ with st.sidebar:
         
         st.write(f"### TOTAL: ${total:.2f}")
         
-        # Botón Nube
-        if st.button("🚀 Finalizar y Enviar Pedido"):
+        # Botón para enviar a Google Sheets
+        if st.button("🚀 Confirmar Pedido (Nube)"):
             if not nombre_cliente:
-                st.error("Ingresa tu nombre.")
+                st.error("Por favor, ingresa tu nombre.")
             else:
                 try:
                     df_gs = conn_gs.read(worksheet="Pedidos")
                     df_nuevo = pd.DataFrame(resumen_list)
                     df_final = pd.concat([df_gs, df_nuevo], ignore_index=True)
                     conn_gs.update(worksheet="Pedidos", data=df_final)
-                    st.success("✅ ¡Pedido enviado!")
+                    st.success("✅ Pedido enviado a la nube.")
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Error de conexión: {e}")
 
-        # Botón Local
-        if st.button("📊 Descargar Excel Local"):
+        # Botón para descargar Excel local
+        if st.button("📊 Generar Excel Local"):
             df_p = pd.DataFrame(resumen_list)
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_p.to_excel(writer, index=False)
-            st.download_button("📥 Click para descargar", output.getvalue(), "mi_pedido.xlsx")
+            st.download_button("📥 Descargar Archivo", output.getvalue(), "mi_pedido.xlsx")
 
 # --- CUERPO PRINCIPAL (CATÁLOGO) ---
 st.title("🏬 Catálogo Digital Color Insumos")
