@@ -10,8 +10,6 @@ from datetime import datetime
 from io import BytesIO
 from fpdf import FPDF 
 from streamlit_js_eval import streamlit_js_eval
-# --- NUEVA LIBRERÍA PARA LA NUBE ---
-from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURACIÓN DE RUTAS ---
 DB_NAME = "color_insumos_v10.db" 
@@ -24,12 +22,6 @@ for carpeta in CARPETAS_IMPORTAR:
     os.makedirs(carpeta, exist_ok=True)
 
 st.set_page_config(page_title="Color Insumos - ERP Maestro", layout="wide")
-
-# --- CONEXIÓN A GOOGLE SHEETS (Configurar en secrets.toml) ---
-try:
-    conn_gs = st.connection("gsheets", type=GSheetsConnection)
-except Exception:
-    conn_gs = None
 
 # --- FUNCIONES DE PERSISTENCIA ---
 def set_persistent_user(user_data):
@@ -454,41 +446,19 @@ else:
             with c_res2:
                 st.header(f"Total: ${total_f:.2f}")
             
-            if st.button("🏁 Confirmar y Sincronizar Pedido", type="primary"):
-                fecha_f = datetime.now().strftime("%d/%m/%Y %H:%M")
-                
-                # 1. Guardar en tu SQLite Local (Tu lógica de siempre)
-                conn.execute("""INSERT INTO pedidos 
-                    (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) 
-                    VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (uid, user['nombre'], fecha_f, json.dumps(carrito_usuario), 
-                     metodo, subtotal_v, 0.0, subtotal_v, "Pendiente"))
-                
-                # 2. ENVIAR A GOOGLE SHEETS (La adaptación)
-                if conn_gs:
-                    try:
-                        # Leemos lo que hay en la pestaña "Pedidos"
-                        df_existente = conn_gs.read(worksheet="Pedidos")
-                        # Creamos la nueva fila
-                        nuevo_pedido = pd.DataFrame([{
-                            "Fecha": fecha_f,
-                            "Cliente": user['nombre'],
-                            "Total": subtotal_v,
-                            "Metodo": metodo,
-                            "Status": "Pendiente",
-                            "Productos": ", ".join([f"{v['c']}x {k}" for k, v in carrito_usuario.items()])
-                        }])
-                        # Concatenamos y actualizamos
-                        df_final = pd.concat([df_existente, nuevo_pedido], ignore_index=True)
-                        conn_gs.update(worksheet="Pedidos", data=df_final)
-                        st.success("✅ Pedido guardado localmente y en la Nube")
-                    except Exception as e:
-                        st.error(f"Error al subir a la nube: {e}")
-                        st.info("El pedido se guardó solo en la base de datos local.")
+            if st.button("🏁 Confirmar y Enviar Pedido", type="primary", use_container_width=True):
+                # Guardar en base de datos
+                conn.execute("""
+                    INSERT INTO pedidos (username, cliente_nombre, fecha, items, metodo_pago, subtotal, descuento, total, status) 
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                """, (uid, user['nombre'], datetime.now().strftime("%d/%m/%Y %H:%M"), json.dumps(carrito_usuario), metodo, subtotal_v, desc, total_f, "Pendiente"))
                 
                 # Limpiar carrito
                 conn.execute("DELETE FROM carritos WHERE username=?", (uid,))
                 conn.commit()
+                
+                st.success("¡Pedido registrado exitosamente!")
+                st.balloons()
                 st.rerun()
 
     # --- MÓDULO MIS PEDIDOS ---
@@ -562,28 +532,7 @@ else:
 
     # --- MÓDULO VENTAS (ADMIN) - ACTUALIZADO ---
     elif menu == "📊 Ventas" and user['rol'] == 'admin':
-        st.title("📊 Control de Ventas Maestro")
-        
-        tab_local, tab_nube = st.tabs(["💻 Base de Datos Local", "☁️ Google Sheets"])
-        
-        with tab_local:
-            st.subheader("Pedidos en SQLite")
-            df_local = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", conn)
-            st.dataframe(df_local, use_container_width=True)
-            
-        with tab_nube:
-            st.subheader("Pedidos en la Nube")
-            if conn_gs:
-                try:
-                    df_nube = conn_gs.read(worksheet="Pedidos")
-                    st.dataframe(df_nube, use_container_width=True)
-                    if st.button("🔄 Refrescar Nube"):
-                        st.cache_data.clear()
-                        st.rerun()
-                except:
-                    st.error("No se pudo leer el archivo de Google Sheets.")
-            else:
-                st.warning("La conexión a Google Sheets no está configurada.")
+        st.title("📊 Panel de Control de Ventas")
 
         # --- 1. RESUMEN DE MÉTRICAS ---
         df_ventas = pd.read_sql("SELECT * FROM pedidos ORDER BY id DESC", conn)
