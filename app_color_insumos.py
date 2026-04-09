@@ -17,6 +17,10 @@ if not os.path.exists(IMG_DIR):
 
 st.set_page_config(page_title="Catálogo Color Insumos", layout="wide")
 
+# --- INICIALIZACIÓN CRÍTICA DEL ESTADO (Corregido para evitar AttributeError) ---
+if 'carrito' not in st.session_state: 
+    st.session_state.carrito = {}
+
 # --- NUEVA CONEXIÓN A GOOGLE SHEETS ---
 conn_gs = st.connection("gsheets", type=GSheetsConnection)
 
@@ -52,7 +56,7 @@ def obtener_categoria(sku, descripcion):
     if any(x in d for x in ["STICKER", "CALCOMANIA", "ADHESIVA", "FOAMI"]): return "🎨 MANUALIDADES"
     return "📦 VARIOS"
 
-# --- MOTOR DE EXTRACCIÓN (Tu lógica optimizada) ---
+# --- MOTOR DE EXTRACCIÓN ---
 def procesar_pdf_a_db(pdf_file):
     with open("temp_admin.pdf", "wb") as f:
         f.write(pdf_file.getbuffer())
@@ -60,7 +64,6 @@ def procesar_pdf_a_db(pdf_file):
     doc = fitz.open("temp_admin.pdf")
     productos = []
     
-    # Limpiar fotos antiguas
     if os.path.exists(IMG_DIR): shutil.rmtree(IMG_DIR)
     os.makedirs(IMG_DIR)
 
@@ -83,7 +86,6 @@ def procesar_pdf_a_db(pdf_file):
                     precio_txt = page.within_bbox(row.cells[3]).extract_text() or "0"
                     precio = float(precio_txt.replace(',', '.').strip())
                     
-                    # Imagen por coordenadas
                     y_mid = (row.bbox[1] + row.bbox[3]) / 2
                     foto_path = ""
                     for img_obj in imgs_pag:
@@ -114,7 +116,7 @@ with st.sidebar:
     
     with st.expander("🔐 Acceso Administrador"):
         clave = st.text_input("Contraseña", type="password")
-        if clave == "color2026": # CAMBIA TU CLAVE AQUÍ
+        if clave == "color2026":
             nuevo_pdf = st.file_uploader("Actualizar Lista PDF", type="pdf")
             if nuevo_pdf and st.button("🔄 Sincronizar Catálogo"):
                 df_n = procesar_pdf_a_db(nuevo_pdf)
@@ -128,19 +130,13 @@ st.title("🏬 Catálogo Digital Color Insumos")
 if df_cat.empty:
     st.warning("Aún no hay productos cargados. El administrador debe subir el PDF.")
 else:
-    # Buscador y Filtro
     c1, c2 = st.columns([2, 1])
     query = c1.text_input("🔍 Buscar por nombre o código:")
     filtro_cat = c2.selectbox("📂 Área:", ["TODAS"] + sorted(df_cat['categoria'].unique().tolist()))
     
-    # Filtrado
     df_res = df_cat[df_cat['descripcion'].str.contains(query, case=False) | df_cat['sku'].str.contains(query, case=False)]
     if filtro_cat != "TODAS": df_res = df_res[df_res['categoria'] == filtro_cat]
 
-    # Carrito en Session State
-    if 'carrito' not in st.session_state: st.session_state.carrito = {}
-
-    # Mostrar por Secciones
     for cat in sorted(df_res['categoria'].unique()):
         st.header(cat)
         items = df_res[df_res['categoria'] == cat]
@@ -162,12 +158,11 @@ else:
                     elif row['sku'] in st.session_state.carrito:
                         del st.session_state.carrito[row['sku']]
 
-# RESUMEN DE PEDIDO (Solo si hay algo)
+# RESUMEN DE PEDIDO
 if st.session_state.carrito:
     st.sidebar.divider()
     st.sidebar.subheader("🛒 Tu Pedido")
     
-    # NUEVO: Input para nombre del cliente antes de enviar
     nombre_cliente = st.sidebar.text_input("Tu Nombre / Empresa", key="cliente_nombre")
     
     total = 0
@@ -180,24 +175,19 @@ if st.session_state.carrito:
     
     st.sidebar.write(f"### TOTAL: ${total:.2f}")
     
-    # NUEVA FUNCIÓN: Botón para enviar a Google Sheets
     if st.sidebar.button("🚀 Finalizar y Enviar Pedido"):
         if not nombre_cliente:
             st.sidebar.error("Por favor, ingresa tu nombre antes de enviar.")
         else:
             try:
-                # Leer datos existentes de la pestaña "Pedidos"
                 df_gs = conn_gs.read(worksheet="Pedidos")
-                # Crear DataFrame con el pedido actual
                 df_nuevo = pd.DataFrame(resumen_list)
-                # Unir y subir
                 df_final = pd.concat([df_gs, df_nuevo], ignore_index=True)
                 conn_gs.update(worksheet="Pedidos", data=df_final)
                 st.sidebar.success("✅ ¡Pedido enviado correctamente!")
             except Exception as e:
                 st.sidebar.error(f"Error al conectar con la nube: {e}")
 
-    # Exportar Excel (Mantenido)
     if st.sidebar.button("📊 Descargar Excel Local"):
         df_p = pd.DataFrame(resumen_list)
         output = io.BytesIO()
