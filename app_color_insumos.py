@@ -1,161 +1,180 @@
 import streamlit as st
+import pdfplumber
+import fitz  # PyMuPDF
 import pandas as pd
 import sqlite3
 import os
 import io
 import shutil
-import pdfplumber
-import fitz  # PyMuPDF
-from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Sistema Color Insumos", layout="wide", initial_sidebar_state="expanded")
-
-# --- RUTAS Y BASE DE DATOS ---
+# --- CONFIGURACIÓN DE RUTAS ---
 DB_NAME = "catalogo_color.db"
 IMG_DIR = "static/fotos"
 if not os.path.exists(IMG_DIR):
     os.makedirs(IMG_DIR, exist_ok=True)
 
+st.set_page_config(page_title="Catálogo Color Insumos", layout="wide")
+
+# --- FUNCIONES DE BASE DE DATOS ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
-    # Tabla de productos
     conn.execute('''CREATE TABLE IF NOT EXISTS productos 
                  (sku TEXT, descripcion TEXT, precio REAL, categoria TEXT, foto_path TEXT)''')
-    # Tabla de ventas local
-    conn.execute('''CREATE TABLE IF NOT EXISTS ventas 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
-                  cliente TEXT, total REAL)''')
     conn.close()
 
-# --- FUNCIONES DE SOPORTE ---
-def cargar_datos_locales():
+def actualizar_base_datos(df):
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("DELETE FROM productos")
+    df.to_sql('productos', conn, if_exists='append', index=False)
+    conn.commit()
+    conn.close()
+
+def cargar_catalogo():
+    if not os.path.exists(DB_NAME): return pd.DataFrame()
     conn = sqlite3.connect(DB_NAME)
     df = pd.read_sql("SELECT * FROM productos", conn)
     conn.close()
     return df
 
-def procesar_excel(file):
-    df = pd.read_excel(file)
-    # Aquí puedes seleccionar columnas específicas si el Excel varía
-    return df
+# --- LÓGICA DE CATEGORIZACIÓN ---
+def obtener_categoria(sku, descripcion):
+    d = descripcion.upper()
+    s = sku.upper()
+    if any(x in d for x in ["ABACO", "DIDACTICO", "JUEGO", "ROMPECABEZA", "PZZ"]): return "🧩 JUEGOS Y DIDÁCTICOS"
+    if any(x in d for x in ["MARCADOR", "LAPIZ", "BOLIGRAFO", "COLORES", "BORRADOR"]): return "✏️ ESCRITURA"
+    if any(x in d for x in ["PAPEL", "CARTULINA", "BLOCK", "LIBRETA", "CUADERNO"]): return "📄 PAPELERÍA"
+    if any(x in d for x in ["TIJERA", "REGLA", "PEGA", "GRAPADORA", "CINTA"]): return "✂️ OFICINA / ESCOLAR"
+    if any(x in d for x in ["STICKER", "CALCOMANIA", "ADHESIVA", "FOAMI"]): return "🎨 MANUALIDADES"
+    return "📦 VARIOS"
 
-# --- INTERFAZ DE NAVEGACIÓN (EL MENÚ QUE BUSCAS) ---
+# --- MOTOR DE EXTRACCIÓN (Tu lógica optimizada) ---
+def procesar_pdf_a_db(pdf_file):
+    with open("temp_admin.pdf", "wb") as f:
+        f.write(pdf_file.getbuffer())
+    
+    doc = fitz.open("temp_admin.pdf")
+    productos = []
+    
+    # Limpiar fotos antiguas
+    if os.path.exists(IMG_DIR): shutil.rmtree(IMG_DIR)
+    os.makedirs(IMG_DIR)
+
+    with pdfplumber.open("temp_admin.pdf") as pdf:
+        for i, page in enumerate(pdf.pages):
+            page_fitz = doc[i]
+            imgs_pag = [{'bbox': img['bbox'], 'xref': x[0]} for img, x in zip(page_fitz.get_image_info(), page_fitz.get_images(full=True))]
+            
+            tables = page.find_tables()
+            if not tables: continue
+            
+            for row in tables[0].rows:
+                try:
+                    if not row.cells or len(row.cells) < 4 or row.cells[0] is None: continue
+                    sku_raw = page.within_bbox(row.cells[0]).extract_text()
+                    if not sku_raw or "REFERENCIA" in sku_raw: continue
+                    
+                    sku = sku_raw.strip().split('\n')[0]
+                    desc = page.within_bbox(row.cells[2]).extract_text().replace('\n', ' ').strip()
+                    precio_txt = page.within_bbox(row.cells[3]).extract_text() or "0"
+                    precio = float(precio_txt.replace(',', '.').strip())
+                    
+                    # Imagen por coordenadas
+                    y_mid = (row.bbox[1] + row.bbox[3]) / 2
+                    foto_path = ""
+                    for img_obj in imgs_pag:
+                        if img_obj['bbox'][1] <= y_mid <= img_obj['bbox'][3]:
+                            pix = fitz.Pixmap(doc, img_obj['xref'])
+                            if pix.n - pix.alpha > 3: pix = fitz.Pixmap(fitz.csRGB, pix)
+                            path = os.path.join(IMG_DIR, f"{sku}.png")
+                            pix.save(path)
+                            foto_path = path
+                            break
+                    
+                    productos.append({
+                        "sku": sku, "descripcion": desc, "precio": precio,
+                        "categoria": obtener_categoria(sku, desc), "foto_path": foto_path
+                    })
+                except: continue
+    doc.close()
+    return pd.DataFrame(productos)
+
+# --- INTERFAZ PRINCIPAL ---
+init_db()
+df_cat = cargar_catalogo()
+
+# SIDEBAR: ADMIN Y CARRITO
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3081/3081840.png", width=120)
-    st.title("Color Insumos")
+    st.image("https://cdn-icons-png.flaticon.com/512/3081/3081840.png", width=100)
+    st.title("Panel de Control")
     
-    # Navegación principal
-    menu_principal = st.radio("MENÚ PRINCIPAL", [
-        "🛒 Catálogo / Ventas",
-        "📂 Gestión de Pedidos",
-        "⚙️ Configuración Admin"
-    ])
+    with st.expander("🔐 Acceso Administrador"):
+        clave = st.text_input("Contraseña", type="password")
+        if clave == "color2026": # CAMBIA TU CLAVE AQUÍ
+            nuevo_pdf = st.file_uploader("Actualizar Lista PDF", type="pdf")
+            if nuevo_pdf and st.button("🔄 Sincronizar Catálogo"):
+                df_n = procesar_pdf_a_db(nuevo_pdf)
+                actualizar_base_datos(df_n)
+                st.success("¡Catálogo actualizado!")
+                st.rerun()
+
+# CUERPO DE LA APP (VISTA CLIENTE)
+st.title("🏬 Catálogo Digital Color Insumos")
+
+if df_cat.empty:
+    st.warning("Aún no hay productos cargados. El administrador debe subir el PDF.")
+else:
+    # Buscador y Filtro
+    c1, c2 = st.columns([2, 1])
+    query = c1.text_input("🔍 Buscar por nombre o código:")
+    filtro_cat = c2.selectbox("📂 Área:", ["TODAS"] + sorted(df_cat['categoria'].unique().tolist()))
     
-    st.divider()
-    
-    # Estado del carrito
+    # Filtrado
+    df_res = df_cat[df_cat['descripcion'].str.contains(query, case=False) | df_cat['sku'].str.contains(query, case=False)]
+    if filtro_cat != "TODAS": df_res = df_res[df_res['categoria'] == filtro_cat]
+
+    # Carrito en Session State
     if 'carrito' not in st.session_state: st.session_state.carrito = {}
-    if st.session_state.carrito:
-        st.subheader("🛒 Carrito Actual")
-        for k, v in st.session_state.carrito.items():
-            st.caption(f"{v['cant']}x {k}")
 
-# --- LÓGICA DE PÁGINAS ---
-
-# 1. MÓDULO DE CATÁLOGO Y VENTAS
-if menu_principal == "🛒 Catálogo / Ventas":
-    st.title("🛍️ Punto de Venta / Catálogo")
-    df_prods = cargar_datos_locales()
-    
-    if df_prods.empty:
-        st.warning("No hay productos. Ve a Configuración para cargar datos.")
-    else:
-        busqueda = st.text_input("Buscar producto (Nombre o SKU)")
-        df_f = df_prods[df_prods['descripcion'].str.contains(busqueda, case=False) | df_prods['sku'].str.contains(busqueda, case=False)]
-        
+    # Mostrar por Secciones
+    for cat in sorted(df_res['categoria'].unique()):
+        st.header(cat)
+        items = df_res[df_res['categoria'] == cat]
         cols = st.columns(4)
-        for idx, row in df_f.reset_index().iterrows():
+        for idx, row in items.reset_index().iterrows():
             with cols[idx % 4]:
                 with st.container(border=True):
                     if row['foto_path'] and os.path.exists(row['foto_path']):
-                        st.image(row['foto_path'], use_column_width=True)
-                    st.write(f"**{row['sku']}**")
-                    st.caption(row['descripcion'])
-                    st.info(f"${row['precio']:.2f}")
-                    cant = st.number_input("Cantidad", min_value=0, key=f"v_{row['sku']}", step=1)
+                        st.image(row['foto_path'], width=140)
+                    else: st.write("🖼️ (Sin Imagen)")
+                    
+                    st.markdown(f"**{row['sku']}**")
+                    st.write(row['descripcion'])
+                    st.info(f"Precio: ${row['precio']:.2f}")
+                    
+                    cant = st.number_input("Cant.", min_value=0, key=f"k_{row['sku']}", step=1)
                     if cant > 0:
-                        st.session_state.carrito[row['sku']] = {"precio": row['precio'], "cant": cant}
+                        st.session_state.carrito[row['sku']] = {"desc": row['descripcion'], "precio": row['precio'], "cant": cant}
                     elif row['sku'] in st.session_state.carrito:
                         del st.session_state.carrito[row['sku']]
 
-# 2. MÓDULO DE PEDIDOS (CONEXIÓN GOOGLE SHEETS)
-elif menu_principal == "📂 Gestión de Pedidos":
-    st.title("☁️ Pedidos en la Nube")
-    try:
-        conn_gs = st.connection("gsheets", type=GSheetsConnection)
-        df_pedidos = conn_gs.read(worksheet="Pedidos")
-        st.subheader("Historial de Clientes")
-        st.dataframe(df_pedidos, use_container_width=True)
-        
-        if st.button("🔄 Refrescar Nube"):
-            st.rerun()
-    except:
-        st.error("Error de conexión a Google Sheets. Verifica tus Secrets.")
-
-# 3. MÓDULO DE CONFIGURACIÓN / ADMIN (TU MENÚ COMPLETO)
-elif menu_principal == "⚙️ Configuración Admin":
-    st.title("⚙️ Panel de Control Administrativo")
+# RESUMEN DE PEDIDO (Solo si hay algo)
+if st.session_state.carrito:
+    st.sidebar.divider()
+    st.sidebar.subheader("🛒 Tu Pedido")
+    total = 0
+    resumen_list = []
+    for s, info in st.session_state.carrito.items():
+        sub = info['precio'] * info['cant']
+        total += sub
+        resumen_list.append({"SKU": s, "Cant": info['cant'], "Subt": round(sub, 2)})
+        st.sidebar.caption(f"{info['cant']}x {s} (${sub:.2f})")
     
-    user_log = st.text_input("Usuario / Correo")
-    pass_log = st.text_input("Contraseña", type="password")
+    st.sidebar.write(f"### TOTAL: ${total:.2f}")
     
-    if user_log and pass_log == "20880157":
-        st.success(f"Bienvenido Administrador: {user_log}")
-        
-        # Pestañas para organizar los módulos
-        tab_carga, tab_usuarios, tab_respaldo = st.tabs([
-            "📤 Carga de Artículos (Excel/PDF)", 
-            "👥 Usuarios y Ventas", 
-            "💾 Respaldos"
-        ])
-        
-        with tab_carga:
-            st.subheader("Importar Inventario")
-            metodo = st.radio("Método de carga:", ["Excel (Masivo)", "PDF (Con Fotos)"])
-            
-            if metodo == "Excel (Masivo)":
-                archivo_ex = st.file_uploader("Subir Archivo Excel (.xlsx)", type="xlsx")
-                if archivo_ex:
-                    df_ex = pd.read_excel(archivo_ex)
-                    st.write("Vista previa de los datos:")
-                    st.dataframe(df_ex.head())
-                    if st.button("💾 Guardar en Base de Datos"):
-                        conn = sqlite3.connect(DB_NAME)
-                        df_ex.to_sql('productos', conn, if_exists='replace', index=False)
-                        conn.close()
-                        st.success("¡Base de datos actualizada desde Excel!")
-            
-            else:
-                archivo_pdf = st.file_uploader("Subir Catálogo PDF", type="pdf")
-                st.info("El sistema extraerá descripciones y fotos automáticamente.")
-                # (Aquí iría tu función de procesamiento de PDF que ya tenemos)
-
-        with tab_usuarios:
-            st.subheader("Gestión de Usuarios y Ventas Local")
-            st.info("Módulo para administrar personal de Color Insumos y ver cierres de caja.")
-            # Mostrar tabla de ventas local
-            conn = sqlite3.connect(DB_NAME)
-            ventas_df = pd.read_sql("SELECT * FROM ventas", conn)
-            st.dataframe(ventas_df)
-            conn.close()
-
-        with tab_respaldo:
-            st.subheader("Módulo de Respaldo")
-            if st.button("📦 Generar Backup de la Base de Datos"):
-                with open(DB_NAME, "rb") as f:
-                    st.download_button("Descargar Archivo .DB", f, file_name="backup_color_insumos.db")
-    else:
-        st.warning("Por favor, identifícate para acceder a los módulos de administración.")
-
-init_db()
+    # Exportar Excel
+    if st.sidebar.button("📊 Generar Excel"):
+        df_p = pd.DataFrame(resumen_list)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_p.to_excel(writer, index=False)
+        st.sidebar.download_button("📥 Descargar Pedido", output.getvalue(), "mi_pedido.xlsx")
