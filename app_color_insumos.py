@@ -6,6 +6,7 @@ import sqlite3
 import os
 import io
 import shutil
+# --- NUEVO: MÓDULO DE CONEXIÓN A LA NUBE ---
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURACIÓN DE RUTAS ---
@@ -16,17 +17,17 @@ if not os.path.exists(IMG_DIR):
 
 st.set_page_config(page_title="Catálogo Color Insumos", layout="wide")
 
-# --- INICIALIZACIÓN DEL ESTADO ---
+# --- MÓDULO 1: GESTIÓN DE ESTADO (Evita errores de carga) ---
 if 'carrito' not in st.session_state: 
     st.session_state.carrito = {}
 
-# --- CONEXIÓN A GOOGLE SHEETS ---
+# --- MÓDULO 2: CONEXIÓN A GOOGLE SHEETS ---
 try:
     conn_gs = st.connection("gsheets", type=GSheetsConnection)
-except:
-    st.error("Error al configurar la conexión GSheets. Verifica tus Secrets.")
+except Exception:
+    st.sidebar.error("⚠️ Configura los 'Secrets' para usar la Nube.")
 
-# --- FUNCIONES DE BASE DE DATOS ---
+# --- MÓDULO 3: MOTOR DE BASE DE DATOS LOCAL ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     conn.execute('''CREATE TABLE IF NOT EXISTS productos 
@@ -47,7 +48,7 @@ def cargar_catalogo():
     conn.close()
     return df
 
-# --- LÓGICA DE CATEGORIZACIÓN ---
+# --- MÓDULO 4: INTELIGENCIA DE CATEGORÍAS ---
 def obtener_categoria(sku, descripcion):
     d = descripcion.upper()
     if any(x in d for x in ["ABACO", "DIDACTICO", "JUEGO", "ROMPECABEZA", "PZZ"]): return "🧩 JUEGOS Y DIDÁCTICOS"
@@ -57,15 +58,16 @@ def obtener_categoria(sku, descripcion):
     if any(x in d for x in ["STICKER", "CALCOMANIA", "ADHESIVA", "FOAMI"]): return "🎨 MANUALIDADES"
     return "📦 VARIOS"
 
-# --- MOTOR DE EXTRACCIÓN (PDF + FOTOS + DB) ---
+# --- MÓDULO 5: SINCRONIZACIÓN DE FOTOS Y DATOS (Extracción PDF) ---
 def procesar_pdf_a_db(pdf_file):
     with open("temp_admin.pdf", "wb") as f:
         f.write(pdf_file.getbuffer())
     doc = fitz.open("temp_admin.pdf")
     productos = []
+    
     if os.path.exists(IMG_DIR): shutil.rmtree(IMG_DIR)
     os.makedirs(IMG_DIR)
-    
+
     with pdfplumber.open("temp_admin.pdf") as pdf:
         for i, page in enumerate(pdf.pages):
             page_fitz = doc[i]
@@ -96,106 +98,108 @@ def procesar_pdf_a_db(pdf_file):
     doc.close()
     return pd.DataFrame(productos)
 
-# --- INTERFAZ ---
+# --- INICIO DE APLICACIÓN ---
 init_db()
 df_cat = cargar_catalogo()
 
-# --- MENÚ LATERAL (SIDEBAR) ---
+# --- MÓDULO 6: MENÚ LATERAL (ADMIN + COMPRADOR) ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3081/3081840.png", width=100)
     
-    # MÓDULO 1: ACCESO Y ADMINISTRACIÓN
-    st.title("Administración")
-    with st.expander("🔑 Iniciar Sesión Admin"):
-        user = st.text_input("Usuario / Correo")
-        passw = st.text_input("Contraseña", type="password")
+    # SECCIÓN ADMIN
+    st.title("Panel Administrativo")
+    with st.expander("🔐 Acceso de Seguridad"):
+        usuario = st.text_input("Correo / Usuario")
+        clave = st.text_input("Contraseña", type="password")
         
-        if user and passw == "20880157":
-            st.success(f"Bienvenido, {user}")
+        if usuario and clave == "20880157": # Tu clave definitiva
+            st.success(f"Sesión iniciada: {usuario}")
             
-            st.subheader("📦 Módulo de Carga")
-            nuevo_pdf = st.file_uploader("Subir Catálogo (PDF)", type="pdf")
-            if nuevo_pdf and st.button("🚀 Sincronizar Todo (Fotos y DB)"):
-                with st.spinner("Procesando PDF, extrayendo imágenes y actualizando base de datos..."):
+            # Sub-módulo de carga
+            st.markdown("### 🛠️ Herramientas")
+            nuevo_pdf = st.file_uploader("Actualizar PDF", type="pdf")
+            if nuevo_pdf and st.button("🔄 Sincronizar Fotos y Precios"):
+                with st.spinner("Procesando catálogo..."):
                     df_n = procesar_pdf_a_db(nuevo_pdf)
                     actualizar_base_datos(df_n)
-                    st.success("✅ ¡Sincronización Completa!")
+                    st.success("Sincronización Exitosa")
                     st.rerun()
-
+            
             st.divider()
-            st.subheader("👥 Módulo de Clientes")
-            if st.button("📊 Ver Pedidos en la Nube"):
+            # Sub-módulo de visualización de clientes
+            if st.button("📂 Ver Clientes y Pedidos (Nube)"):
                 try:
                     df_pedidos = conn_gs.read(worksheet="Pedidos")
+                    st.write("### Listado de Pedidos Recibidos")
                     st.dataframe(df_pedidos)
                 except:
-                    st.error("No se pudo conectar a la Nube. Revisa los Secrets.")
+                    st.error("No se pudo conectar con la base de datos en la nube.")
 
-    # MÓDULO 2: CARRITO DE COMPRAS
+    # SECCIÓN CARRITO (Para el Comprador)
     if st.session_state.carrito:
         st.divider()
-        st.title("🛒 Carrito")
-        nom_cliente = st.text_input("Nombre del Cliente", key="nom_cli")
+        st.title("🛒 Carrito de Compras")
+        nom_cli = st.text_input("Tu Nombre o Empresa", key="nombre_ped")
         
         total = 0
-        lista_pedidos = []
-        for sku, info in st.session_state.carrito.items():
-            subt = info['precio'] * info['cant']
-            total += subt
-            lista_pedidos.append({"Cliente": nom_cliente, "SKU": sku, "Cant": info['cant'], "Total": round(subt, 2)})
-            st.caption(f"{info['cant']}x {sku} (${subt:.2f})")
+        pedidos_nube = []
+        for s, info in st.session_state.carrito.items():
+            sub = info['precio'] * info['cant']
+            total += sub
+            pedidos_nube.append({"Cliente": nom_cli, "SKU": s, "Cant": info['cant'], "Total": round(sub, 2)})
+            st.caption(f"{info['cant']}x {s} (${sub:.2f})")
         
-        st.write(f"**Total a Pagar: ${total:.2f}**")
+        st.write(f"### TOTAL: ${total:.2f}")
         
-        # Botón para la Nube
-        if st.button("☁️ Enviar Pedido a la Nube"):
-            if not nom_cliente:
-                st.error("Falta el nombre.")
+        # Sub-módulo Nube
+        if st.button("🚀 Confirmar Pedido (Nube)"):
+            if not nom_cli:
+                st.error("Falta el nombre del cliente.")
             else:
                 try:
                     df_gs = conn_gs.read(worksheet="Pedidos")
-                    df_final = pd.concat([df_gs, pd.DataFrame(lista_pedidos)], ignore_index=True)
+                    df_final = pd.concat([df_gs, pd.DataFrame(pedidos_nube)], ignore_index=True)
                     conn_gs.update(worksheet="Pedidos", data=df_final)
-                    st.success("Pedido enviado.")
+                    st.success("✅ Pedido enviado a Color Insumos")
                 except:
-                    st.error("Error de conexión.")
+                    st.error("Error al enviar. Verifica los permisos.")
 
-        # Botón para Excel Local
-        if st.button("📄 Descargar Excel Local"):
-            df_xl = pd.DataFrame(lista_pedidos)
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as w:
-                df_xl.to_excel(w, index=False)
-            st.download_button("📥 Bajar Excel", buf.getvalue(), "pedido.xlsx")
+        # Sub-módulo Excel Local
+        if st.button("📊 Descargar Excel Local"):
+            df_xl = pd.DataFrame(pedidos_nube)
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_xl.to_excel(writer, index=False)
+            st.download_button("📥 Bajar Archivo", output.getvalue(), "mi_pedido.xlsx")
 
-# --- VISTA PRINCIPAL (COMPRADOR) ---
-st.title("🏬 Color Insumos - Catálogo")
+# --- MÓDULO 7: CUERPO PRINCIPAL (CATÁLOGO VISUAL) ---
+st.title("🏬 Catálogo Digital Color Insumos")
 
 if df_cat.empty:
-    st.info("El catálogo está vacío. El administrador debe sincronizar el PDF.")
+    st.warning("Catálogo vacío. El Administrador debe sincronizar el PDF en el panel lateral.")
 else:
     c1, c2 = st.columns([2, 1])
-    buscar = c1.text_input("🔍 Buscar producto...")
-    filtro = c2.selectbox("📂 Categoría:", ["TODAS"] + sorted(df_cat['categoria'].unique().tolist()))
+    query = c1.text_input("🔍 Buscar por nombre o código:")
+    filtro_cat = c2.selectbox("📂 Área:", ["TODAS"] + sorted(df_cat['categoria'].unique().tolist()))
     
-    df_f = df_cat[df_cat['descripcion'].str.contains(buscar, case=False) | df_cat['sku'].str.contains(buscar, case=False)]
-    if filtro != "TODAS": df_f = df_f[df_f['categoria'] == filtro]
+    df_res = df_cat[df_cat['descripcion'].str.contains(query, case=False) | df_cat['sku'].str.contains(query, case=False)]
+    if filtro_cat != "TODAS": df_res = df_res[df_res['categoria'] == filtro_cat]
 
-    for cat in sorted(df_f['categoria'].unique()):
+    for cat in sorted(df_res['categoria'].unique()):
         st.header(cat)
-        rows = df_f[df_f['categoria'] == cat]
+        items = df_res[df_res['categoria'] == cat]
         cols = st.columns(4)
-        for i, row in rows.reset_index().iterrows():
-            with cols[i % 4]:
+        for idx, row in items.reset_index().iterrows():
+            with cols[idx % 4]:
                 with st.container(border=True):
                     if row['foto_path'] and os.path.exists(row['foto_path']):
-                        st.image(row['foto_path'], width=150)
-                    else: st.write("🖼️ Sin Foto")
-                    st.write(f"**{row['sku']}**")
+                        st.image(row['foto_path'], width=140)
+                    else: st.write("🖼️ (Sin Imagen)")
+                    st.markdown(f"**{row['sku']}**")
                     st.caption(row['descripcion'])
-                    st.write(f"**${row['precio']:.2f}**")
-                    c_input = st.number_input("Cant.", min_value=0, key=f"in_{row['sku']}", step=1)
-                    if c_input > 0:
-                        st.session_state.carrito[row['sku']] = {"precio": row['precio'], "cant": c_input}
+                    st.info(f"Precio: ${row['precio']:.2f}")
+                    cant = st.number_input("Cant.", min_value=0, key=f"k_{row['sku']}", step=1)
+                    if cant > 0:
+                        st.session_state.carrito[row['sku']] = {"precio": row['precio'], "cant": cant}
                     elif row['sku'] in st.session_state.carrito:
                         del st.session_state.carrito[row['sku']]
