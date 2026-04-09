@@ -6,3 +6,4 @@ openpyxl
 fpdf2
 reportlab
 streamlit-js-eval
+st-gsheets-connection
