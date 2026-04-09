@@ -6,7 +6,6 @@ import sqlite3
 import os
 import io
 import shutil
-# --- NUEVA LIBRERÍA PARA CONEXIÓN A NUBE ---
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURACIÓN DE RUTAS ---
@@ -17,11 +16,11 @@ if not os.path.exists(IMG_DIR):
 
 st.set_page_config(page_title="Catálogo Color Insumos", layout="wide")
 
-# --- INICIALIZACIÓN CRÍTICA DEL ESTADO (Corregido para evitar AttributeError) ---
+# --- INICIALIZACIÓN DEL ESTADO ---
 if 'carrito' not in st.session_state: 
     st.session_state.carrito = {}
 
-# --- NUEVA CONEXIÓN A GOOGLE SHEETS ---
+# --- CONEXIÓN A GOOGLE SHEETS ---
 conn_gs = st.connection("gsheets", type=GSheetsConnection)
 
 # --- FUNCIONES DE BASE DE DATOS ---
@@ -48,7 +47,6 @@ def cargar_catalogo():
 # --- LÓGICA DE CATEGORIZACIÓN ---
 def obtener_categoria(sku, descripcion):
     d = descripcion.upper()
-    s = sku.upper()
     if any(x in d for x in ["ABACO", "DIDACTICO", "JUEGO", "ROMPECABEZA", "PZZ"]): return "🧩 JUEGOS Y DIDÁCTICOS"
     if any(x in d for x in ["MARCADOR", "LAPIZ", "BOLIGRAFO", "COLORES", "BORRADOR"]): return "✏️ ESCRITURA"
     if any(x in d for x in ["PAPEL", "CARTULINA", "BLOCK", "LIBRETA", "CUADERNO"]): return "📄 PAPELERÍA"
@@ -60,32 +58,25 @@ def obtener_categoria(sku, descripcion):
 def procesar_pdf_a_db(pdf_file):
     with open("temp_admin.pdf", "wb") as f:
         f.write(pdf_file.getbuffer())
-    
     doc = fitz.open("temp_admin.pdf")
     productos = []
-    
     if os.path.exists(IMG_DIR): shutil.rmtree(IMG_DIR)
     os.makedirs(IMG_DIR)
-
     with pdfplumber.open("temp_admin.pdf") as pdf:
         for i, page in enumerate(pdf.pages):
             page_fitz = doc[i]
             imgs_pag = [{'bbox': img['bbox'], 'xref': x[0]} for img, x in zip(page_fitz.get_image_info(), page_fitz.get_images(full=True))]
-            
             tables = page.find_tables()
             if not tables: continue
-            
             for row in tables[0].rows:
                 try:
                     if not row.cells or len(row.cells) < 4 or row.cells[0] is None: continue
                     sku_raw = page.within_bbox(row.cells[0]).extract_text()
                     if not sku_raw or "REFERENCIA" in sku_raw: continue
-                    
                     sku = sku_raw.strip().split('\n')[0]
                     desc = page.within_bbox(row.cells[2]).extract_text().replace('\n', ' ').strip()
                     precio_txt = page.within_bbox(row.cells[3]).extract_text() or "0"
                     precio = float(precio_txt.replace(',', '.').strip())
-                    
                     y_mid = (row.bbox[1] + row.bbox[3]) / 2
                     foto_path = ""
                     for img_obj in imgs_pag:
@@ -96,24 +87,21 @@ def procesar_pdf_a_db(pdf_file):
                             pix.save(path)
                             foto_path = path
                             break
-                    
-                    productos.append({
-                        "sku": sku, "descripcion": desc, "precio": precio,
-                        "categoria": obtener_categoria(sku, desc), "foto_path": foto_path
-                    })
+                    productos.append({"sku": sku, "descripcion": desc, "precio": precio, "categoria": obtener_categoria(sku, desc), "foto_path": foto_path})
                 except: continue
     doc.close()
     return pd.DataFrame(productos)
 
-# --- INTERFAZ PRINCIPAL ---
+# --- INICIO DE INTERFAZ ---
 init_db()
 df_cat = cargar_catalogo()
 
-# SIDEBAR: ADMIN Y CARRITO
+# --- MENÚ LATERAL (Estructura Original) ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3081/3081840.png", width=100)
-    st.title("Panel de Control")
     
+    # 1. MENÚ ADMINISTRADOR
+    st.title("Panel de Control")
     with st.expander("🔐 Acceso Administrador"):
         clave = st.text_input("Contraseña", type="password")
         if clave == "color2026":
@@ -124,11 +112,49 @@ with st.sidebar:
                 st.success("¡Catálogo actualizado!")
                 st.rerun()
 
-# CUERPO DE LA APP (VISTA CLIENTE)
+    # 2. MENÚ CLIENTE (CARRITO)
+    if st.session_state.carrito:
+        st.divider()
+        st.subheader("🛒 Tu Pedido")
+        nombre_cliente = st.text_input("Nombre / Empresa", key="cliente_nombre")
+        
+        total = 0
+        resumen_list = []
+        for s, info in st.session_state.carrito.items():
+            sub = info['precio'] * info['cant']
+            total += sub
+            resumen_list.append({"Cliente": nombre_cliente, "SKU": s, "Cant": info['cant'], "Subt": round(sub, 2)})
+            st.caption(f"{info['cant']}x {s} (${sub:.2f})")
+        
+        st.write(f"### TOTAL: ${total:.2f}")
+        
+        # Botón Nube
+        if st.button("🚀 Finalizar y Enviar Pedido"):
+            if not nombre_cliente:
+                st.error("Ingresa tu nombre.")
+            else:
+                try:
+                    df_gs = conn_gs.read(worksheet="Pedidos")
+                    df_nuevo = pd.DataFrame(resumen_list)
+                    df_final = pd.concat([df_gs, df_nuevo], ignore_index=True)
+                    conn_gs.update(worksheet="Pedidos", data=df_final)
+                    st.success("✅ ¡Pedido enviado!")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        # Botón Local
+        if st.button("📊 Descargar Excel Local"):
+            df_p = pd.DataFrame(resumen_list)
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_p.to_excel(writer, index=False)
+            st.download_button("📥 Click para descargar", output.getvalue(), "mi_pedido.xlsx")
+
+# --- CUERPO PRINCIPAL (CATÁLOGO) ---
 st.title("🏬 Catálogo Digital Color Insumos")
 
 if df_cat.empty:
-    st.warning("Aún no hay productos cargados. El administrador debe subir el PDF.")
+    st.warning("Aún no hay productos cargados.")
 else:
     c1, c2 = st.columns([2, 1])
     query = c1.text_input("🔍 Buscar por nombre o código:")
@@ -147,50 +173,11 @@ else:
                     if row['foto_path'] and os.path.exists(row['foto_path']):
                         st.image(row['foto_path'], width=140)
                     else: st.write("🖼️ (Sin Imagen)")
-                    
                     st.markdown(f"**{row['sku']}**")
                     st.write(row['descripcion'])
                     st.info(f"Precio: ${row['precio']:.2f}")
-                    
                     cant = st.number_input("Cant.", min_value=0, key=f"k_{row['sku']}", step=1)
                     if cant > 0:
                         st.session_state.carrito[row['sku']] = {"desc": row['descripcion'], "precio": row['precio'], "cant": cant}
                     elif row['sku'] in st.session_state.carrito:
                         del st.session_state.carrito[row['sku']]
-
-# RESUMEN DE PEDIDO
-if st.session_state.carrito:
-    st.sidebar.divider()
-    st.sidebar.subheader("🛒 Tu Pedido")
-    
-    nombre_cliente = st.sidebar.text_input("Tu Nombre / Empresa", key="cliente_nombre")
-    
-    total = 0
-    resumen_list = []
-    for s, info in st.session_state.carrito.items():
-        sub = info['precio'] * info['cant']
-        total += sub
-        resumen_list.append({"Cliente": nombre_cliente, "SKU": s, "Cant": info['cant'], "Subt": round(sub, 2)})
-        st.sidebar.caption(f"{info['cant']}x {s} (${sub:.2f})")
-    
-    st.sidebar.write(f"### TOTAL: ${total:.2f}")
-    
-    if st.sidebar.button("🚀 Finalizar y Enviar Pedido"):
-        if not nombre_cliente:
-            st.sidebar.error("Por favor, ingresa tu nombre antes de enviar.")
-        else:
-            try:
-                df_gs = conn_gs.read(worksheet="Pedidos")
-                df_nuevo = pd.DataFrame(resumen_list)
-                df_final = pd.concat([df_gs, df_nuevo], ignore_index=True)
-                conn_gs.update(worksheet="Pedidos", data=df_final)
-                st.sidebar.success("✅ ¡Pedido enviado correctamente!")
-            except Exception as e:
-                st.sidebar.error(f"Error al conectar con la nube: {e}")
-
-    if st.sidebar.button("📊 Descargar Excel Local"):
-        df_p = pd.DataFrame(resumen_list)
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_p.to_excel(writer, index=False)
-        st.sidebar.download_button("📥 Click para descargar", output.getvalue(), "mi_pedido.xlsx")
