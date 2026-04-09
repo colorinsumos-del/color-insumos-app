@@ -17,7 +17,8 @@ if not os.path.exists(IMG_DIR):
 
 st.set_page_config(page_title="Catálogo Color Insumos", layout="wide")
 
-# --- INICIALIZACIÓN DEL ESTADO (Evita errores de carga) ---
+# --- INICIALIZACIÓN CRÍTICA DEL ESTADO ---
+# Esto evita el error "AttributeError" al recargar la página
 if 'carrito' not in st.session_state: 
     st.session_state.carrito = {}
 
@@ -48,6 +49,7 @@ def cargar_catalogo():
 # --- LÓGICA DE CATEGORIZACIÓN ---
 def obtener_categoria(sku, descripcion):
     d = descripcion.upper()
+    s = sku.upper()
     if any(x in d for x in ["ABACO", "DIDACTICO", "JUEGO", "ROMPECABEZA", "PZZ"]): return "🧩 JUEGOS Y DIDÁCTICOS"
     if any(x in d for x in ["MARCADOR", "LAPIZ", "BOLIGRAFO", "COLORES", "BORRADOR"]): return "✏️ ESCRITURA"
     if any(x in d for x in ["PAPEL", "CARTULINA", "BLOCK", "LIBRETA", "CUADERNO"]): return "📄 PAPELERÍA"
@@ -59,25 +61,34 @@ def obtener_categoria(sku, descripcion):
 def procesar_pdf_a_db(pdf_file):
     with open("temp_admin.pdf", "wb") as f:
         f.write(pdf_file.getbuffer())
+    
     doc = fitz.open("temp_admin.pdf")
     productos = []
+    
+    # Limpiar fotos antiguas
     if os.path.exists(IMG_DIR): shutil.rmtree(IMG_DIR)
     os.makedirs(IMG_DIR)
+
     with pdfplumber.open("temp_admin.pdf") as pdf:
         for i, page in enumerate(pdf.pages):
             page_fitz = doc[i]
             imgs_pag = [{'bbox': img['bbox'], 'xref': x[0]} for img, x in zip(page_fitz.get_image_info(), page_fitz.get_images(full=True))]
+            
             tables = page.find_tables()
             if not tables: continue
+            
             for row in tables[0].rows:
                 try:
                     if not row.cells or len(row.cells) < 4 or row.cells[0] is None: continue
                     sku_raw = page.within_bbox(row.cells[0]).extract_text()
                     if not sku_raw or "REFERENCIA" in sku_raw: continue
+                    
                     sku = sku_raw.strip().split('\n')[0]
                     desc = page.within_bbox(row.cells[2]).extract_text().replace('\n', ' ').strip()
                     precio_txt = page.within_bbox(row.cells[3]).extract_text() or "0"
                     precio = float(precio_txt.replace(',', '.').strip())
+                    
+                    # Imagen por coordenadas
                     y_mid = (row.bbox[1] + row.bbox[3]) / 2
                     foto_path = ""
                     for img_obj in imgs_pag:
@@ -88,24 +99,27 @@ def procesar_pdf_a_db(pdf_file):
                             pix.save(path)
                             foto_path = path
                             break
-                    productos.append({"sku": sku, "descripcion": desc, "precio": precio, "categoria": obtener_categoria(sku, desc), "foto_path": foto_path})
+                    
+                    productos.append({
+                        "sku": sku, "descripcion": desc, "precio": precio,
+                        "categoria": obtener_categoria(sku, desc), "foto_path": foto_path
+                    })
                 except: continue
     doc.close()
     return pd.DataFrame(productos)
 
-# --- INICIO DE INTERFAZ ---
+# --- INTERFAZ PRINCIPAL ---
 init_db()
 df_cat = cargar_catalogo()
 
-# --- MENÚ LATERAL (Estructura Original Solicitada) ---
+# SIDEBAR: ADMIN Y CARRITO
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3081/3081840.png", width=100)
+    st.title("Panel de Control")
     
-    # 1. MENÚ ADMINISTRADOR (Clave actualizada a 20880157)
-    st.title("Panel Administrador")
-    with st.expander("🔐 Acceder"):
+    with st.expander("🔐 Acceso Administrador"):
         clave = st.text_input("Contraseña", type="password")
-        if clave == "20880157":
+        if clave == "20880157": # CLAVE ACTUALIZADA
             nuevo_pdf = st.file_uploader("Actualizar Lista PDF", type="pdf")
             if nuevo_pdf and st.button("🔄 Sincronizar Catálogo"):
                 df_n = procesar_pdf_a_db(nuevo_pdf)
@@ -113,57 +127,22 @@ with st.sidebar:
                 st.success("¡Catálogo actualizado!")
                 st.rerun()
 
-    # 2. MENÚ COMPRADOR (Resumen de Carrito)
-    if st.session_state.carrito:
-        st.divider()
-        st.subheader("🛒 Tu Carrito")
-        nombre_cliente = st.text_input("Nombre / Empresa", key="cliente_nombre")
-        
-        total = 0
-        resumen_list = []
-        for s, info in st.session_state.carrito.items():
-            sub = info['precio'] * info['cant']
-            total += sub
-            resumen_list.append({"Cliente": nombre_cliente, "SKU": s, "Cant": info['cant'], "Subt": round(sub, 2)})
-            st.caption(f"{info['cant']}x {s} (${sub:.2f})")
-        
-        st.write(f"### TOTAL: ${total:.2f}")
-        
-        # Botón para enviar a Google Sheets
-        if st.button("🚀 Confirmar Pedido (Nube)"):
-            if not nombre_cliente:
-                st.error("Por favor, ingresa tu nombre.")
-            else:
-                try:
-                    df_gs = conn_gs.read(worksheet="Pedidos")
-                    df_nuevo = pd.DataFrame(resumen_list)
-                    df_final = pd.concat([df_gs, df_nuevo], ignore_index=True)
-                    conn_gs.update(worksheet="Pedidos", data=df_final)
-                    st.success("✅ Pedido enviado a la nube.")
-                except Exception as e:
-                    st.error(f"Error de conexión: {e}")
-
-        # Botón para descargar Excel local
-        if st.button("📊 Generar Excel Local"):
-            df_p = pd.DataFrame(resumen_list)
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_p.to_excel(writer, index=False)
-            st.download_button("📥 Descargar Archivo", output.getvalue(), "mi_pedido.xlsx")
-
-# --- CUERPO PRINCIPAL (CATÁLOGO) ---
+# CUERPO DE LA APP (VISTA CLIENTE)
 st.title("🏬 Catálogo Digital Color Insumos")
 
 if df_cat.empty:
-    st.warning("Aún no hay productos cargados.")
+    st.warning("Aún no hay productos cargados. El administrador debe subir el PDF.")
 else:
+    # Buscador y Filtro
     c1, c2 = st.columns([2, 1])
     query = c1.text_input("🔍 Buscar por nombre o código:")
     filtro_cat = c2.selectbox("📂 Área:", ["TODAS"] + sorted(df_cat['categoria'].unique().tolist()))
     
+    # Filtrado
     df_res = df_cat[df_cat['descripcion'].str.contains(query, case=False) | df_cat['sku'].str.contains(query, case=False)]
     if filtro_cat != "TODAS": df_res = df_res[df_res['categoria'] == filtro_cat]
 
+    # Mostrar por Secciones
     for cat in sorted(df_res['categoria'].unique()):
         st.header(cat)
         items = df_res[df_res['categoria'] == cat]
@@ -174,11 +153,53 @@ else:
                     if row['foto_path'] and os.path.exists(row['foto_path']):
                         st.image(row['foto_path'], width=140)
                     else: st.write("🖼️ (Sin Imagen)")
+                    
                     st.markdown(f"**{row['sku']}**")
                     st.write(row['descripcion'])
                     st.info(f"Precio: ${row['precio']:.2f}")
+                    
                     cant = st.number_input("Cant.", min_value=0, key=f"k_{row['sku']}", step=1)
                     if cant > 0:
                         st.session_state.carrito[row['sku']] = {"desc": row['descripcion'], "precio": row['precio'], "cant": cant}
                     elif row['sku'] in st.session_state.carrito:
                         del st.session_state.carrito[row['sku']]
+
+# RESUMEN DE PEDIDO (Solo si hay algo)
+if st.session_state.carrito:
+    st.sidebar.divider()
+    st.sidebar.subheader("🛒 Tu Pedido")
+    
+    # NUEVO: Input necesario para saber de quién es el pedido en la Nube
+    nombre_cliente = st.sidebar.text_input("Tu Nombre / Empresa", key="cliente_nombre")
+    
+    total = 0
+    resumen_list = []
+    for s, info in st.session_state.carrito.items():
+        sub = info['precio'] * info['cant']
+        total += sub
+        resumen_list.append({"Cliente": nombre_cliente, "SKU": s, "Cant": info['cant'], "Subt": round(sub, 2)})
+        st.sidebar.caption(f"{info['cant']}x {s} (${sub:.2f})")
+    
+    st.sidebar.write(f"### TOTAL: ${total:.2f}")
+    
+    # BOTÓN 1: Enviar a la Nube (Google Sheets)
+    if st.sidebar.button("🚀 Enviar Pedido a la Nube"):
+        if not nombre_cliente:
+            st.sidebar.error("Por favor, ingresa tu nombre arriba.")
+        else:
+            try:
+                df_gs = conn_gs.read(worksheet="Pedidos")
+                df_nuevo = pd.DataFrame(resumen_list)
+                df_final = pd.concat([df_gs, df_nuevo], ignore_index=True)
+                conn_gs.update(worksheet="Pedidos", data=df_final)
+                st.sidebar.success("✅ ¡Pedido enviado correctamente!")
+            except Exception as e:
+                st.sidebar.error(f"Error al conectar: {e}")
+
+    # BOTÓN 2: Exportar Excel Local (Tu código original)
+    if st.sidebar.button("📊 Generar Excel Local"):
+        df_p = pd.DataFrame(resumen_list)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_p.to_excel(writer, index=False)
+        st.sidebar.download_button("📥 Descargar Pedido", output.getvalue(), "mi_pedido.xlsx")
