@@ -6,7 +6,6 @@ import sqlite3
 import os
 import io
 import shutil
-# --- LIBRERÍA PARA LA NUBE ---
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURACIÓN DE RUTAS ---
@@ -17,12 +16,15 @@ if not os.path.exists(IMG_DIR):
 
 st.set_page_config(page_title="Catálogo Color Insumos", layout="wide")
 
-# --- INICIALIZACIÓN CRÍTICA DEL ESTADO ---
+# --- INICIALIZACIÓN DEL ESTADO ---
 if 'carrito' not in st.session_state: 
     st.session_state.carrito = {}
 
 # --- CONEXIÓN A GOOGLE SHEETS ---
-conn_gs = st.connection("gsheets", type=GSheetsConnection)
+try:
+    conn_gs = st.connection("gsheets", type=GSheetsConnection)
+except:
+    st.error("Error al configurar la conexión GSheets. Verifica tus Secrets.")
 
 # --- FUNCIONES DE BASE DE DATOS ---
 def init_db():
@@ -55,7 +57,7 @@ def obtener_categoria(sku, descripcion):
     if any(x in d for x in ["STICKER", "CALCOMANIA", "ADHESIVA", "FOAMI"]): return "🎨 MANUALIDADES"
     return "📦 VARIOS"
 
-# --- MOTOR DE EXTRACCIÓN ---
+# --- MOTOR DE EXTRACCIÓN (PDF + FOTOS + DB) ---
 def procesar_pdf_a_db(pdf_file):
     with open("temp_admin.pdf", "wb") as f:
         f.write(pdf_file.getbuffer())
@@ -63,6 +65,7 @@ def procesar_pdf_a_db(pdf_file):
     productos = []
     if os.path.exists(IMG_DIR): shutil.rmtree(IMG_DIR)
     os.makedirs(IMG_DIR)
+    
     with pdfplumber.open("temp_admin.pdf") as pdf:
         for i, page in enumerate(pdf.pages):
             page_fitz = doc[i]
@@ -93,111 +96,106 @@ def procesar_pdf_a_db(pdf_file):
     doc.close()
     return pd.DataFrame(productos)
 
-# --- INICIO DE INTERFAZ ---
+# --- INTERFAZ ---
 init_db()
 df_cat = cargar_catalogo()
 
-# --- MENÚ LATERAL ---
+# --- MENÚ LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3081/3081840.png", width=100)
     
-    # 1. PANEL DE ADMINISTRADOR
-    st.title("Panel de Control")
-    with st.expander("🔐 Acceso Administrador"):
-        # Se agregaron los campos de Usuario/Correo y Clave tal como pediste
-        correo_admin = st.text_input("Usuario / Correo")
-        clave_admin = st.text_input("Contraseña", type="password")
+    # MÓDULO 1: ACCESO Y ADMINISTRACIÓN
+    st.title("Administración")
+    with st.expander("🔑 Iniciar Sesión Admin"):
+        user = st.text_input("Usuario / Correo")
+        passw = st.text_input("Contraseña", type="password")
         
-        # Validamos que ingrese un correo y la clave sea 20880157
-        if correo_admin and clave_admin == "20880157":
-            st.success("Acceso concedido")
+        if user and passw == "20880157":
+            st.success(f"Bienvenido, {user}")
             
-            # Opción 1: Subir PDF
-            nuevo_pdf = st.file_uploader("Actualizar Lista PDF", type="pdf")
-            if nuevo_pdf and st.button("🔄 Sincronizar Catálogo"):
-                df_n = procesar_pdf_a_db(nuevo_pdf)
-                actualizar_base_datos(df_n)
-                st.success("¡Catálogo actualizado!")
-                st.rerun()
-                
+            st.subheader("📦 Módulo de Carga")
+            nuevo_pdf = st.file_uploader("Subir Catálogo (PDF)", type="pdf")
+            if nuevo_pdf and st.button("🚀 Sincronizar Todo (Fotos y DB)"):
+                with st.spinner("Procesando PDF, extrayendo imágenes y actualizando base de datos..."):
+                    df_n = procesar_pdf_a_db(nuevo_pdf)
+                    actualizar_base_datos(df_n)
+                    st.success("✅ ¡Sincronización Completa!")
+                    st.rerun()
+
             st.divider()
-            
-            # Opción 2: Ver clientes (NUEVO)
-            st.write("👥 **Gestión de Clientes**")
-            if st.button("☁️ Ver Pedidos en la Nube"):
+            st.subheader("👥 Módulo de Clientes")
+            if st.button("📊 Ver Pedidos en la Nube"):
                 try:
                     df_pedidos = conn_gs.read(worksheet="Pedidos")
-                    st.dataframe(df_pedidos) # Muestra la tabla de Google Sheets aquí mismo
-                except Exception as e:
-                    st.error("No se pudieron cargar los pedidos. Verifica tu Google Sheet.")
+                    st.dataframe(df_pedidos)
+                except:
+                    st.error("No se pudo conectar a la Nube. Revisa los Secrets.")
 
-    # 2. PANEL DEL CLIENTE (Carrito de compras)
+    # MÓDULO 2: CARRITO DE COMPRAS
     if st.session_state.carrito:
         st.divider()
-        st.subheader("🛒 Tu Pedido")
-        # Campo para que el cliente ponga su nombre
-        nombre_cliente = st.text_input("Tu Nombre / Empresa", key="cliente_nombre")
+        st.title("🛒 Carrito")
+        nom_cliente = st.text_input("Nombre del Cliente", key="nom_cli")
         
         total = 0
-        resumen_list = []
-        for s, info in st.session_state.carrito.items():
-            sub = info['precio'] * info['cant']
-            total += sub
-            resumen_list.append({"Cliente": nombre_cliente, "SKU": s, "Cant": info['cant'], "Subt": round(sub, 2)})
-            st.caption(f"{info['cant']}x {s} (${sub:.2f})")
+        lista_pedidos = []
+        for sku, info in st.session_state.carrito.items():
+            subt = info['precio'] * info['cant']
+            total += subt
+            lista_pedidos.append({"Cliente": nom_cliente, "SKU": sku, "Cant": info['cant'], "Total": round(subt, 2)})
+            st.caption(f"{info['cant']}x {sku} (${subt:.2f})")
         
-        st.write(f"### TOTAL: ${total:.2f}")
+        st.write(f"**Total a Pagar: ${total:.2f}**")
         
-        # Botón para enviar a Google Sheets
-        if st.button("🚀 Confirmar Pedido"):
-            if not nombre_cliente:
-                st.error("Por favor, ingresa tu nombre antes de enviar.")
+        # Botón para la Nube
+        if st.button("☁️ Enviar Pedido a la Nube"):
+            if not nom_cliente:
+                st.error("Falta el nombre.")
             else:
                 try:
                     df_gs = conn_gs.read(worksheet="Pedidos")
-                    df_nuevo = pd.DataFrame(resumen_list)
-                    df_final = pd.concat([df_gs, df_nuevo], ignore_index=True)
+                    df_final = pd.concat([df_gs, pd.DataFrame(lista_pedidos)], ignore_index=True)
                     conn_gs.update(worksheet="Pedidos", data=df_final)
-                    st.success("✅ ¡Pedido enviado con éxito!")
-                except Exception as e:
-                    st.error(f"Error al enviar: {e}")
+                    st.success("Pedido enviado.")
+                except:
+                    st.error("Error de conexión.")
 
-        # Botón Excel Local
-        if st.button("📊 Generar Excel Local"):
-            df_p = pd.DataFrame(resumen_list)
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_p.to_excel(writer, index=False)
-            st.download_button("📥 Descargar Archivo", output.getvalue(), "mi_pedido.xlsx")
+        # Botón para Excel Local
+        if st.button("📄 Descargar Excel Local"):
+            df_xl = pd.DataFrame(lista_pedidos)
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as w:
+                df_xl.to_excel(w, index=False)
+            st.download_button("📥 Bajar Excel", buf.getvalue(), "pedido.xlsx")
 
-# --- CUERPO PRINCIPAL (CATÁLOGO) ---
-st.title("🏬 Catálogo Digital Color Insumos")
+# --- VISTA PRINCIPAL (COMPRADOR) ---
+st.title("🏬 Color Insumos - Catálogo")
 
 if df_cat.empty:
-    st.warning("Aún no hay productos cargados. El administrador debe subir el PDF.")
+    st.info("El catálogo está vacío. El administrador debe sincronizar el PDF.")
 else:
     c1, c2 = st.columns([2, 1])
-    query = c1.text_input("🔍 Buscar por nombre o código:")
-    filtro_cat = c2.selectbox("📂 Área:", ["TODAS"] + sorted(df_cat['categoria'].unique().tolist()))
+    buscar = c1.text_input("🔍 Buscar producto...")
+    filtro = c2.selectbox("📂 Categoría:", ["TODAS"] + sorted(df_cat['categoria'].unique().tolist()))
     
-    df_res = df_cat[df_cat['descripcion'].str.contains(query, case=False) | df_cat['sku'].str.contains(query, case=False)]
-    if filtro_cat != "TODAS": df_res = df_res[df_res['categoria'] == filtro_cat]
+    df_f = df_cat[df_cat['descripcion'].str.contains(buscar, case=False) | df_cat['sku'].str.contains(buscar, case=False)]
+    if filtro != "TODAS": df_f = df_f[df_f['categoria'] == filtro]
 
-    for cat in sorted(df_res['categoria'].unique()):
+    for cat in sorted(df_f['categoria'].unique()):
         st.header(cat)
-        items = df_res[df_res['categoria'] == cat]
+        rows = df_f[df_f['categoria'] == cat]
         cols = st.columns(4)
-        for idx, row in items.reset_index().iterrows():
-            with cols[idx % 4]:
+        for i, row in rows.reset_index().iterrows():
+            with cols[i % 4]:
                 with st.container(border=True):
                     if row['foto_path'] and os.path.exists(row['foto_path']):
-                        st.image(row['foto_path'], width=140)
-                    else: st.write("🖼️ (Sin Imagen)")
-                    st.markdown(f"**{row['sku']}**")
-                    st.write(row['descripcion'])
-                    st.info(f"Precio: ${row['precio']:.2f}")
-                    cant = st.number_input("Cant.", min_value=0, key=f"k_{row['sku']}", step=1)
-                    if cant > 0:
-                        st.session_state.carrito[row['sku']] = {"desc": row['descripcion'], "precio": row['precio'], "cant": cant}
+                        st.image(row['foto_path'], width=150)
+                    else: st.write("🖼️ Sin Foto")
+                    st.write(f"**{row['sku']}**")
+                    st.caption(row['descripcion'])
+                    st.write(f"**${row['precio']:.2f}**")
+                    c_input = st.number_input("Cant.", min_value=0, key=f"in_{row['sku']}", step=1)
+                    if c_input > 0:
+                        st.session_state.carrito[row['sku']] = {"precio": row['precio'], "cant": c_input}
                     elif row['sku'] in st.session_state.carrito:
                         del st.session_state.carrito[row['sku']]
