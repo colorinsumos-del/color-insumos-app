@@ -15,6 +15,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from io import BytesIO
 
+try:
+    from streamlit_js_eval import streamlit_js_eval
+except Exception:
+    streamlit_js_eval = None
+
 # =============================================================
 # PEDIDOS POINTER - ERP/POS LOCAL V7
 # Streamlit + SQLite
@@ -23,7 +28,7 @@ from io import BytesIO
 # comisiones, alertas y estados de cuenta.
 # =============================================================
 
-APP_NAME = "Sistema de pedidos pointer V20"
+APP_NAME = "Sistema de pedidos pointer V21 Responsive"
 DB_NAME = "color_insumos_local_v5.db"
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -54,6 +59,18 @@ st.markdown("""
 .catalog-img img {object-fit:cover;border-radius:8px;}
 .total-box {background:#f8f9fa;border:1px solid #e9ecef;border-radius:16px;padding:18px;}
 .stButton button {border-radius:10px;}
+.mobile-product-card {border:1px solid #e5e7eb;border-radius:18px;padding:14px;margin:10px 0;box-shadow:0 2px 10px rgba(0,0,0,.04);background:#fff;}
+.mobile-product-title {font-size:1.05rem;font-weight:800;color:#1f77b4;line-height:1.2;margin:6px 0 2px 0;}
+.mobile-price {font-size:1.55rem;font-weight:900;margin:6px 0 0 0;}
+.mobile-ves {color:#6b7280;font-size:.9rem;font-weight:700;}
+.mobile-total-grid {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;}
+@media (max-width: 768px) {
+  .block-container {padding-left:.7rem;padding-right:.7rem;padding-top:.6rem;}
+  .mobile-total-grid {grid-template-columns:repeat(2,minmax(0,1fr));}
+  .desktop-help {display:none;}
+  div[data-testid="stHorizontalBlock"] {gap: .35rem;}
+  .stButton button {min-height:42px;}
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -259,7 +276,7 @@ def init_db():
     set_config_default("fuente_tasa_bcv", "Manual")
     set_config_default("descuento_divisas_pct", "30")
     set_config_default("descuento_bcv_100_pct", "10")
-    set_config_default("nombre_empresa", "Sistema de pedidos pointer V20")
+    set_config_default("nombre_empresa", "Sistema de pedidos pointer V21 Responsive")
     set_config_default("telefono_empresa", "04127757053")
     set_config_default("instagram_empresa", "@color.insumos")
 
@@ -576,7 +593,7 @@ def generar_pdf_nota_entrega(pedido_row):
         subtitulo_emisor = "Nota de entrega"
         contacto_emisor = " | ".join([x for x in [f"Telefono: {telefono}" if telefono else "", f"RIF/CI: {rif_emisor}" if rif_emisor else "", ciudad_emisor] if x])
     else:
-        empresa = _pdf_clean(get_config("nombre_empresa", "Sistema de pedidos pointer V20"))
+        empresa = _pdf_clean(get_config("nombre_empresa", "Sistema de pedidos pointer V21 Responsive"))
         telefono = _pdf_clean(get_config("telefono_empresa", "04127757053"))
         instagram = _pdf_clean(get_config("instagram_empresa", "@color.insumos"))
         direccion_emisor = ""
@@ -708,7 +725,7 @@ def generar_pdf_estado_cuenta_cliente(username: str):
     pdf.set_auto_page_break(auto=True, margin=14)
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(190, 8, _pdf_clean(get_config("nombre_empresa", "Sistema de pedidos pointer V20")), ln=1, align="C")
+    pdf.cell(190, 8, _pdf_clean(get_config("nombre_empresa", "Sistema de pedidos pointer V21 Responsive")), ln=1, align="C")
     pdf.set_font("Arial", "", 9)
     pdf.cell(190, 5, _pdf_clean(f"Contacto: {get_config('telefono_empresa','')} | Instagram: {get_config('instagram_empresa','')}"), ln=1, align="C")
     pdf.ln(5)
@@ -813,6 +830,23 @@ def calcular_descuento(user_row, metodo_pago, subtotal):
         return subtotal * (pct_bcv / 100), f"{pct_bcv:g}% BCV desde $100"
     return 0.0, "Sin descuento"
 
+def viewport_width():
+    """Devuelve el ancho del navegador cuando streamlit-js-eval está disponible."""
+    if streamlit_js_eval is None:
+        return None
+    try:
+        width = streamlit_js_eval(js_expressions="window.innerWidth", key="viewport_width")
+        return int(width) if width else None
+    except Exception:
+        return None
+
+def is_mobile_view():
+    """Modo móvil automático con opción de forzarlo desde sesión para pruebas."""
+    if st.session_state.get("force_mobile_view", False):
+        return True
+    w = viewport_width()
+    return bool(w and w <= 768)
+
 def totales_carrito_para_usuario(user_row, carrito):
     """Devuelve resumen del carrito con las dos reglas comerciales posibles."""
     tasa = get_tasa_bcv()
@@ -843,7 +877,7 @@ def mostrar_totalizador_carrito(user_row, carrito, titulo="Resumen del carrito")
     st.markdown(f"""
     <div style="background:#ffffff;border:1px solid #d1fae5;border-radius:12px;padding:12px 14px;margin:8px 0 14px 0;box-shadow:0 2px 8px rgba(0,0,0,.05);">
         <div style="font-weight:700;font-size:1rem;margin-bottom:8px;color:#065f46;">🧾 {titulo}</div>
-        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;">
+        <div class="mobile-total-grid">
             <div><div style="color:#6b7280;font-size:.78rem;">Items</div><div style="font-weight:800;font-size:1.1rem;color:#16a34a;">{t['cantidad']}</div></div>
             <div><div style="color:#6b7280;font-size:.78rem;">Subtotal</div><div style="font-weight:800;font-size:1.1rem;color:#16a34a;">{money_usd(t['subtotal'])}</div></div>
             <div><div style="color:#6b7280;font-size:.78rem;">Divisas/Zelle</div><div style="font-weight:800;font-size:1.1rem;color:#16a34a;">{money_usd(t['total_zelle'])}</div><div style="color:#059669;font-size:.74rem;font-weight:700;">Desc: {money_usd(t['desc_zelle'])}</div></div>
@@ -885,7 +919,7 @@ def save_uploaded_file(uploaded, folder: Path, prefix="file"):
 # AUTENTICACIÓN
 # -----------------------------
 def login_screen():
-    st.title("🔐 Acceso Sistema de pedidos pointer V20")
+    st.title("🔐 Acceso Sistema de pedidos pointer V21 Responsive")
     st.caption("Sistema local de pedidos, créditos y abonos")
     with st.form("login"):
         u = st.text_input("Usuario / correo")
@@ -1062,7 +1096,8 @@ def pos_tienda():
         mask_sku = df_f["sku"].astype(str).str.contains(f_bus, case=False, na=False)
         df_f = df_f[mask_desc | mask_sku]
 
-    items_pag = 15
+    mobile = is_mobile_view()
+    items_pag = 6 if mobile else 15
     total_p = max(1, (len(df_f) // items_pag) + (1 if len(df_f) % items_pag > 0 else 0))
     if "pos_pag_actual" not in st.session_state:
         st.session_state.pos_pag_actual = 1
@@ -1100,45 +1135,73 @@ def pos_tienda():
         sku = str(row["sku"])
         precio_usd = float(row["precio"] or 0)
         precio_ves = precio_usd * tasa
-        r1, r2, r3, r4 = st.columns([1.25, 3.7, 1.35, 2.45])
+        img = row.get("foto_path")
+        promo_html = ""
+        if int(user["aplica_zelle_30"] or 0) == 1 and get_descuento_divisas_pct() > 0:
+            promo = precio_usd * (1 - get_descuento_divisas_pct() / 100)
+            promo_html = f'<div style="display:inline-block;margin-top:6px;padding:4px 10px;border-radius:999px;background:#dcfce7;color:#166534;font-size:.78rem;font-weight:800;border:1px solid #86efac;">Promo divisas: {money_usd(promo)}</div>'
 
-        with r1:
-            img = row.get("foto_path")
+        if mobile:
+            st.markdown('<div class="mobile-product-card">', unsafe_allow_html=True)
             if img and os.path.exists(str(img)):
-                st.image(str(img), width=105)
+                st.image(str(img), use_container_width=True)
             else:
-                st.markdown("<div style='height:90px;width:90px;border-radius:8px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:34px'>📦</div>", unsafe_allow_html=True)
-
-        with r2:
-            st.markdown(f'<p style="font-size:1.08rem;font-weight:700;color:#1f77b4;margin-bottom:2px;line-height:1.2">{row["descripcion"]}</p>', unsafe_allow_html=True)
-            st.markdown(f'<span style="color:#888;font-size:0.78rem;display:block;">{sku} | {row["categoria"]} | Contra pedido</span>', unsafe_allow_html=True)
+                st.markdown("<div style='height:150px;width:100%;border-radius:14px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:42px'>📦</div>", unsafe_allow_html=True)
+            st.markdown(f'<div class="mobile-product-title">{row["descripcion"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="color:#888;font-size:.82rem;margin-bottom:4px;">{sku} | {row["categoria"]} | Contra pedido</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="mobile-price">{money_usd(precio_usd)}</div><div class="mobile-ves">{money_ves(precio_ves)}</div>', unsafe_allow_html=True)
+            if promo_html:
+                st.markdown(promo_html, unsafe_allow_html=True)
             if sku in carrito:
-                st.markdown(f'<span style="color:#28a745;font-weight:bold;font-size:0.8rem;">✅ En carrito: {carrito[sku]["c"]} und.</span>', unsafe_allow_html=True)
-            if int(user["aplica_zelle_30"] or 0) == 1 and get_descuento_divisas_pct() > 0:
-                promo = precio_usd * (1 - get_descuento_divisas_pct() / 100)
-                st.markdown(
-                    f'<div style="display:inline-block;margin-top:6px;padding:4px 10px;border-radius:999px;background:#dcfce7;color:#166534;font-size:.78rem;font-weight:800;border:1px solid #86efac;">Promo divisas: {money_usd(promo)}</div>',
-                    unsafe_allow_html=True
-                )
-
-        with r3:
-            st.markdown(f"### {money_usd(precio_usd)}")
-            st.caption(money_ves(precio_ves))
-
-        with r4:
-            c_input, c_add, c_del = st.columns([1.2, 1, 0.8])
+                st.markdown(f'<div style="color:#28a745;font-weight:800;font-size:.88rem;margin-top:7px;">✅ En carrito: {carrito[sku]["c"]} und.</div>', unsafe_allow_html=True)
+            m1, m2, m3 = st.columns([1.2, 1, 1])
             cant_actual = int(carrito.get(sku, {}).get("c", 1))
-            nueva_q = c_input.number_input("Cant", 1, 99999, cant_actual, label_visibility="collapsed", key=f"pos_q_{sku}")
-            if c_add.button("💾", key=f"pos_s_{sku}", use_container_width=True):
+            nueva_q = m1.number_input("Cant", 1, 99999, cant_actual, label_visibility="collapsed", key=f"pos_q_{sku}")
+            if m2.button("💾 Agregar", key=f"pos_s_{sku}", use_container_width=True):
                 carrito[sku] = {"desc": row["descripcion"], "p": precio_usd, "c": int(nueva_q), "f": row.get("foto_path")}
                 guardar_carrito(user["username"], carrito)
                 st.rerun()
-            if c_del.button("🗑️", key=f"pos_d_{sku}", use_container_width=True):
+            if m3.button("🗑️ Quitar", key=f"pos_d_{sku}", use_container_width=True):
                 if sku in carrito:
                     del carrito[sku]
                     guardar_carrito(user["username"], carrito)
                     st.rerun()
-        st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            r1, r2, r3, r4 = st.columns([1.25, 3.7, 1.35, 2.45])
+
+            with r1:
+                if img and os.path.exists(str(img)):
+                    st.image(str(img), width=105)
+                else:
+                    st.markdown("<div style='height:90px;width:90px;border-radius:8px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:34px'>📦</div>", unsafe_allow_html=True)
+
+            with r2:
+                st.markdown(f'<p style="font-size:1.08rem;font-weight:700;color:#1f77b4;margin-bottom:2px;line-height:1.2">{row["descripcion"]}</p>', unsafe_allow_html=True)
+                st.markdown(f'<span style="color:#888;font-size:0.78rem;display:block;">{sku} | {row["categoria"]} | Contra pedido</span>', unsafe_allow_html=True)
+                if sku in carrito:
+                    st.markdown(f'<span style="color:#28a745;font-weight:bold;font-size:0.8rem;">✅ En carrito: {carrito[sku]["c"]} und.</span>', unsafe_allow_html=True)
+                if promo_html:
+                    st.markdown(promo_html, unsafe_allow_html=True)
+
+            with r3:
+                st.markdown(f"### {money_usd(precio_usd)}")
+                st.caption(money_ves(precio_ves))
+
+            with r4:
+                c_input, c_add, c_del = st.columns([1.2, 1, 0.8])
+                cant_actual = int(carrito.get(sku, {}).get("c", 1))
+                nueva_q = c_input.number_input("Cant", 1, 99999, cant_actual, label_visibility="collapsed", key=f"pos_q_{sku}")
+                if c_add.button("💾", key=f"pos_s_{sku}", use_container_width=True):
+                    carrito[sku] = {"desc": row["descripcion"], "p": precio_usd, "c": int(nueva_q), "f": row.get("foto_path")}
+                    guardar_carrito(user["username"], carrito)
+                    st.rerun()
+                if c_del.button("🗑️", key=f"pos_d_{sku}", use_container_width=True):
+                    if sku in carrito:
+                        del carrito[sku]
+                        guardar_carrito(user["username"], carrito)
+                        st.rerun()
+            st.markdown("<hr style='margin:8px 0; border-color:#eee'>", unsafe_allow_html=True)
 
     barra_navegacion("bottom")
 
@@ -1149,38 +1212,68 @@ def carrito_view():
     if not carrito:
         st.info("Tu carrito está vacío.")
         return
+
+    mobile = is_mobile_view()
     mostrar_totalizador_carrito(u, carrito, "Total actual del pedido")
-    h0, h1, h2, h3, h4 = st.columns([1.1, 3.5, 1.5, 2.4, 1.2])
-    h1.caption("Producto")
-    h2.caption("Precio")
-    h3.caption("Cantidad")
-    h4.caption("Total")
-    st.markdown("---")
-    for sku, d in list(carrito.items()):
-        cr0, cr1, cr2, cr3, cr4 = st.columns([1.1, 3.5, 1.5, 2.4, 1.2])
-        with cr0:
+
+    if mobile:
+        for sku, d in list(carrito.items()):
+            st.markdown('<div class="mobile-product-card">', unsafe_allow_html=True)
             foto_path = d.get("f")
             if foto_path and os.path.exists(str(foto_path)):
-                st.image(str(foto_path), width=85)
+                st.image(str(foto_path), use_container_width=True)
             else:
-                st.markdown("<div style='height:75px;width:75px;border-radius:8px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:28px'>📦</div>", unsafe_allow_html=True)
-        with cr1:
+                st.markdown("<div style='height:140px;width:100%;border-radius:14px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:40px'>📦</div>", unsafe_allow_html=True)
+            tasa_item = get_tasa_bcv()
             st.markdown(f"**{sku}**")
             st.markdown(f"<small>{d['desc']}</small>", unsafe_allow_html=True)
-        tasa_item = get_tasa_bcv()
-        cr2.write(money_usd(d["p"]))
-        cr2.caption(money_ves(float(d["p"]) * tasa_item))
-        ci_q, ci_del = cr3.columns([1.2, 1])
-        newq = ci_q.number_input("Cantidad", min_value=1, value=int(d["c"]), key=f"cartq_{sku}", label_visibility="collapsed")
-        if newq != d["c"]:
-            carrito[sku]["c"] = int(newq)
-            guardar_carrito(u["username"], carrito)
-            st.rerun()
-        if ci_del.button("🗑️", key=f"cartdel_{sku}"):
-            carrito.pop(sku, None); guardar_carrito(u["username"], carrito); st.rerun()
-        cr4.write(f"**{money_usd(float(d['p']) * int(d['c']))}**")
-        cr4.caption(money_ves(float(d["p"]) * int(d["c"]) * tasa_item))
-        st.markdown("<hr style='margin:5px 0; border-color:#f0f0f0'>", unsafe_allow_html=True)
+            st.markdown(f"### {money_usd(float(d['p']) * int(d['c']))}")
+            st.caption(f"Unitario: {money_usd(d['p'])} · {money_ves(float(d['p']) * tasa_item)}")
+            cqm, cdm = st.columns([1.2, 1])
+            newq = cqm.number_input("Cantidad", min_value=1, value=int(d["c"]), key=f"cartq_mobile_{sku}", label_visibility="collapsed")
+            if newq != d["c"]:
+                carrito[sku]["c"] = int(newq)
+                guardar_carrito(u["username"], carrito)
+                st.rerun()
+            if cdm.button("🗑️ Quitar", key=f"cartdel_mobile_{sku}", use_container_width=True):
+                carrito.pop(sku, None)
+                guardar_carrito(u["username"], carrito)
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        h0, h1, h2, h3, h4 = st.columns([1.1, 3.5, 1.5, 2.4, 1.2])
+        h1.caption("Producto")
+        h2.caption("Precio")
+        h3.caption("Cantidad")
+        h4.caption("Total")
+        st.markdown("---")
+        for sku, d in list(carrito.items()):
+            cr0, cr1, cr2, cr3, cr4 = st.columns([1.1, 3.5, 1.5, 2.4, 1.2])
+            with cr0:
+                foto_path = d.get("f")
+                if foto_path and os.path.exists(str(foto_path)):
+                    st.image(str(foto_path), width=85)
+                else:
+                    st.markdown("<div style='height:75px;width:75px;border-radius:8px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:28px'>📦</div>", unsafe_allow_html=True)
+            with cr1:
+                st.markdown(f"**{sku}**")
+                st.markdown(f"<small>{d['desc']}</small>", unsafe_allow_html=True)
+            tasa_item = get_tasa_bcv()
+            cr2.write(money_usd(d["p"]))
+            cr2.caption(money_ves(float(d["p"]) * tasa_item))
+            ci_q, ci_del = cr3.columns([1.2, 1])
+            newq = ci_q.number_input("Cantidad", min_value=1, value=int(d["c"]), key=f"cartq_{sku}", label_visibility="collapsed")
+            if newq != d["c"]:
+                carrito[sku]["c"] = int(newq)
+                guardar_carrito(u["username"], carrito)
+                st.rerun()
+            if ci_del.button("🗑️", key=f"cartdel_{sku}"):
+                carrito.pop(sku, None)
+                guardar_carrito(u["username"], carrito)
+                st.rerun()
+            cr4.write(f"**{money_usd(float(d['p']) * int(d['c']))}**")
+            cr4.caption(money_ves(float(d["p"]) * int(d["c"]) * tasa_item))
+            st.markdown("<hr style='margin:5px 0; border-color:#f0f0f0'>", unsafe_allow_html=True)
     st.markdown("---")
     subtotal = sum(float(d["p"]) * int(d["c"]) for d in carrito.values())
     tasa = get_tasa_bcv()
@@ -1710,7 +1803,7 @@ def configuracion_admin():
 
     st.subheader("Datos de empresa")
     with st.form("empresa"):
-        nombre = st.text_input("Nombre", value=get_config("nombre_empresa", "Sistema de pedidos pointer V20"))
+        nombre = st.text_input("Nombre", value=get_config("nombre_empresa", "Sistema de pedidos pointer V21 Responsive"))
         tel = st.text_input("Teléfono", value=get_config("telefono_empresa", "04127757053"))
         ig = st.text_input("Instagram", value=get_config("instagram_empresa", "@color.insumos"))
         if st.form_submit_button("Guardar datos"):
@@ -1755,7 +1848,7 @@ if not st.session_state.auth:
 else:
     u = st.session_state.user
     with st.sidebar:
-        st.title("🧾 Sistema de pedidos pointer V20")
+        st.title("🧾 Sistema de pedidos pointer V21 Responsive")
         st.markdown("---")
         st.write(f"**{u['nombre']}**")
         st.caption(f"Usuario: {u['username']}")
@@ -1763,9 +1856,17 @@ else:
         base = ["🛍️ Catálogo / POS", "🛒 Carrito", "📜 Mis pedidos", "💳 Mis créditos"]
         admin = ["📊 Dashboard", "📦 Productos", "📥 Importar", "👥 Usuarios", "💳 Validar créditos", "📈 Reportes", "⚙️ Configuración", "💾 Respaldo"]
         opciones = base + (admin if u["rol"] == "admin" else [])
-        menu = st.radio("Menú", opciones)
+        st.session_state.force_mobile_view = st.toggle("Forzar vista móvil", value=st.session_state.get("force_mobile_view", False), help="Útil para probar la vista móvil desde escritorio.")
+        menu_sidebar = st.radio("Menú", opciones)
         if st.button("Cerrar sesión"):
             logout()
+
+    if is_mobile_view():
+        st.caption("📱 Vista móvil activa")
+        default_index = opciones.index(menu_sidebar) if menu_sidebar in opciones else 0
+        menu = st.selectbox("Menú rápido", opciones, index=default_index, key="menu_mobile_top")
+    else:
+        menu = menu_sidebar
 
     if menu == "🛍️ Catálogo / POS": pos_tienda()
     elif menu == "🛒 Carrito": carrito_view()
